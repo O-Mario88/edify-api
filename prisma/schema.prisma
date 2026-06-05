@@ -61,6 +61,19 @@ enum ClusterStatus {
   needs_review
 }
 
+// Status of a Cluster RECORD (vs. a school's clusterStatus above).
+enum ClusterRecordStatus {
+  active
+  needs_review // created via sub-county override
+  inactive
+}
+
+enum ClusterType {
+  client
+  core
+  mixed
+}
+
 enum SsaStatus {
   not_done
   scheduled
@@ -356,10 +369,12 @@ model District {
 model SubCounty {
   id         String    @id @default(cuid())
   name       String
+  seeded     Boolean   @default(false) // true = temporary dev fixture (replace with official data)
   district   District  @relation(fields: [districtId], references: [id])
   districtId String
   parishes   Parish[]
   schools    School[]
+  clusters   Cluster[]
   createdAt  DateTime  @default(now())
 
   @@unique([districtId, name])
@@ -488,7 +503,13 @@ model Cluster {
   regionId   String
   district   District @relation(fields: [districtId], references: [id])
   districtId String
-  subCountyName String?
+  subCounty  SubCounty? @relation(fields: [subCountyId], references: [id])
+  subCountyId String?
+  subCountyName String?  // display fallback
+  clusterType ClusterType @default(mixed)
+  status     ClusterRecordStatus @default(active)
+  overrideReason String? // set when created via sub-county uniqueness override
+  responsibleStaffId String?
   schools    School[]
   assignments SchoolClusterAssignment[]
   activities Activity[]
@@ -497,6 +518,7 @@ model Cluster {
   deletedAt  DateTime?
 
   @@index([districtId])
+  @@index([subCountyId])
 }
 
 model SchoolClusterAssignment {

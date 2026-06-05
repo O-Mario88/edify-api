@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { SchoolsService } from './schools.service';
+import { ClustersService } from '../clusters/clusters.service';
+import { SchoolClusterBodyDto } from '../clusters/dto/cluster.dto';
 import { CreateSchoolDto } from './dto/create-school.dto';
 import { BulkUploadDto } from './dto/bulk-upload.dto';
 import { QuerySchoolsDto } from './dto/query-schools.dto';
@@ -17,7 +19,21 @@ import { AuthUser } from '../../common/auth/auth-user';
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller('schools')
 export class SchoolsController {
-  constructor(private readonly schools: SchoolsService) {}
+  constructor(
+    private readonly schools: SchoolsService,
+    private readonly clusters: ClustersService,
+  ) {}
+
+  // RESTful cluster assignment (§11): POST /schools/:schoolId/cluster
+  @Post(':schoolId/cluster')
+  @RequirePermissions(PERMISSIONS.CLUSTER_ASSIGN)
+  assignCluster(
+    @Param('schoolId') schoolId: string,
+    @Body() body: SchoolClusterBodyDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.clusters.assignSchool(schoolId, body.clusterId, body.reason, user);
+  }
 
   @Get()
   @RequirePermissions(PERMISSIONS.SCHOOL_VIEW)

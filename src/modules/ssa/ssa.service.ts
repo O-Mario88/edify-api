@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { ScopeService } from '../../common/scope/scope.service';
+import { ReadinessService } from '../../common/readiness/readiness.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 import { getOperationalFY, getQuarterForDate } from '../../common/fy/fy.util';
@@ -14,6 +15,7 @@ export class SsaService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly scope: ScopeService,
+    private readonly readiness: ReadinessService,
   ) {}
 
   async list(query: PaginationDto, user: AuthUser) {
@@ -56,21 +58,15 @@ export class SsaService {
       include: { scores: true },
     });
 
-    const currentFy = getOperationalFY();
-    await this.prisma.school.update({
-      where: { id: school.id },
-      data: {
-        currentFySsaStatus: fy === currentFy ? 'done' : school.currentFySsaStatus,
-        planningReadiness: school.clusterId && fy === currentFy ? 'ready' : school.clusterId ? 'limited' : 'locked',
-        ...(dto.newEnrollment ? { enrollment: dto.newEnrollment } : {}),
-      },
-    });
     if (dto.newEnrollment) {
+      await this.prisma.school.update({ where: { id: school.id }, data: { enrollment: dto.newEnrollment } });
       await this.prisma.schoolEnrollmentHistory.upsert({
         where: { schoolId_fy: { schoolId: school.id, fy } }, update: { enrollment: dto.newEnrollment },
         create: { schoolId: school.id, fy, enrollment: dto.newEnrollment },
       });
     }
+    // Centralized readiness recompute (§16) — the bridge to planning lists.
+    await this.readiness.recompute(school.id);
 
     await this.audit.log({ action: 'ssa.upload', subjectKind: 'SsaRecord', subjectId: record.id, actorId: user.userId, actorRole: user.activeRole, payload: { schoolId: dto.schoolId, fy, average } });
     return record;

@@ -1,0 +1,60 @@
+import { Injectable } from '@nestjs/common';
+import { PlanningReadiness, School } from '@prisma/client';
+import { PrismaService } from '../../prisma/prisma.service';
+import { getOperationalFY } from '../fy/fy.util';
+
+// The detailed planning lifecycle stage (§16) — derived, human-readable. The
+// coarse School.planningReadiness enum (locked/limited/ready) is the stored gate;
+// this label is computed from the school's current state.
+export type PlanningStage =
+  | 'Account Owner Missing'
+  | 'Duplicate Review Pending'
+  | 'Unclustered'
+  | 'Clustered, SSA Required'
+  | 'SIT Scheduled, SSA Missing'
+  | 'SSA Complete, Planning Ready'
+  | 'Core Package Planning';
+
+@Injectable()
+export class ReadinessService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  /** Pure: the detailed stage for a school row (no DB). */
+  stageFor(school: Pick<School, 'accountOwnerStatus' | 'duplicateStatus' | 'clusterStatus' | 'currentFySsaStatus' | 'schoolType'>): PlanningStage {
+    if (school.accountOwnerStatus === 'unmatched') return 'Account Owner Missing';
+    if (school.duplicateStatus === 'potential') return 'Duplicate Review Pending';
+    if (school.clusterStatus !== 'clustered') return 'Unclustered';
+    if (school.currentFySsaStatus === 'scheduled') return 'SIT Scheduled, SSA Missing';
+    if (school.currentFySsaStatus !== 'done') return 'Clustered, SSA Required';
+    return school.schoolType === 'core' ? 'Core Package Planning' : 'SSA Complete, Planning Ready';
+  }
+
+  /** Coarse stored gate. */
+  private coarse(clustered: boolean, ssaCurrent: boolean): PlanningReadiness {
+    return clustered && ssaCurrent ? 'ready' : clustered ? 'limited' : 'locked';
+  }
+
+  /** Recompute and persist a school's readiness from its current state + latest SSA.
+   *  Call after every trigger (upload, owner, cluster, ssa, activity, etc.). */
+  async recompute(schoolId: string): Promise<{ planningReadiness: PlanningReadiness; stage: PlanningStage }> {
+    const school = await this.prisma.school.findUniqueOrThrow({
+      where: { id: schoolId },
+      include: { ssaRecords: { where: { deletedAt: null }, orderBy: { dateOfSsa: 'desc' }, take: 1 } },
+    });
+    const latest = school.ssaRecords[0];
+    const currentFy = getOperationalFY();
+    const ssaCurrent = !!latest && latest.fy === currentFy;
+    const clustered = !!school.clusterId && school.clusterStatus === 'clustered';
+
+    const planningReadiness = this.coarse(clustered, ssaCurrent);
+    const updated = await this.prisma.school.update({
+      where: { id: schoolId },
+      data: {
+        clusterStatus: clustered ? 'clustered' : (school.clusterStatus === 'needs_review' ? 'needs_review' : 'unclustered'),
+        currentFySsaStatus: ssaCurrent ? 'done' : school.currentFySsaStatus,
+        planningReadiness,
+      },
+    });
+    return { planningReadiness, stage: this.stageFor(updated) };
+  }
+}

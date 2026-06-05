@@ -49,6 +49,29 @@ export class SystemHealthService {
     add('staff-without-primary-district', 'warning', staffNoPrimaryDistrict, 'Active staff with no primary district');
     add('payments-without-ia-confirmation', 'info', paymentsNoIa, 'Payment requests still awaiting IA confirmation');
 
+    // ── Cluster + planning integrity (§21) ──────────────────────────
+    const [clustersNoSchools, mismatch, planningReadyButUnclustered] = await Promise.all([
+      this.prisma.cluster.count({ where: { deletedAt: null, schools: { none: {} } } }),
+      // clustered school whose clusterId has no backing SchoolClusterAssignment
+      this.prisma.school.count({ where: { deletedAt: null, clusterStatus: 'clustered', clusterId: { not: null }, clusterAssignments: { none: {} } } }),
+      // inconsistency: planning-ready but not actually clustered
+      this.prisma.school.count({ where: { deletedAt: null, planningReadiness: 'ready', clusterStatus: { not: 'clustered' } } }),
+    ]);
+    // Duplicate ACTIVE clusters in the same sub-county.
+    const dupClusters = await this.prisma.cluster.groupBy({
+      by: ['subCountyId'], where: { deletedAt: null, status: 'active', subCountyId: { not: null } }, _count: { _all: true }, having: { subCountyId: { _count: { gt: 1 } } },
+    });
+    // Sub-counties that have unclustered schools but no active cluster.
+    const subsWithUnclusteredNoCluster = await this.prisma.subCounty.count({
+      where: { clusters: { none: { deletedAt: null, status: 'active' } }, schools: { some: { deletedAt: null, clusterStatus: 'unclustered' } } },
+    });
+
+    add('cluster-with-no-schools', 'warning', clustersNoSchools, 'Clusters with no schools');
+    add('clustered-school-without-assignment', 'error', mismatch, 'Clustered schools with no backing cluster assignment');
+    add('planning-ready-but-unclustered', 'error', planningReadyButUnclustered, 'Schools marked planning-ready but not clustered (inconsistency)');
+    add('duplicate-active-cluster-per-subcounty', 'error', dupClusters.length, 'Sub-counties with more than one active cluster');
+    add('subcounty-unclustered-schools-no-cluster', 'info', subsWithUnclusteredNoCluster, 'Sub-counties with unclustered schools and no cluster yet');
+
     // Production must not run with mock data enabled.
     if (this.config.get('NODE_ENV') === 'production' && this.config.get<boolean>('ENABLE_MOCK_DATA')) {
       findings.push({ rule: 'mock-data-enabled-in-production', severity: 'error', count: 1, message: 'ENABLE_MOCK_DATA is true in production' });

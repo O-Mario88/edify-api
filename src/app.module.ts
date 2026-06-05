@@ -9,6 +9,7 @@ import { SchoolsModule } from './modules/schools/schools.module';
 import { ClustersModule } from './modules/clusters/clusters.module';
 import { SsaModule } from './modules/ssa/ssa.module';
 import { ActivitiesModule } from './modules/activities/activities.module';
+import { PlanningModule } from './modules/planning/planning.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { SystemHealthModule } from './modules/system-health/system-health.module';
 import { HealthController } from './health.controller';
@@ -24,6 +25,7 @@ import { HealthController } from './health.controller';
     ClustersModule,
     SsaModule,
     ActivitiesModule,
+    PlanningModule,
     AnalyticsModule,
     SystemHealthModule,
     // Roadmap modules (scaffolded next): users/staff, planning, evidence,
