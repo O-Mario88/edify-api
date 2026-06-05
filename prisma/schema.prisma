@@ -1,0 +1,892 @@
+// Edify Planning & Monitoring Tool — data model.
+//
+// Principles encoded here:
+//  • School Directory is the source of truth. Every operational record traces
+//    back to a School (schoolId) or a Cluster.
+//  • Salesforce-ready from day one: SV-/TS- IDs and sync fields exist, but
+//    Salesforce is NOT integrated yet (manual entry + IA confirmation).
+//  • Stable ids (cuid), createdAt/updatedAt everywhere, soft delete (deletedAt)
+//    where records must not be hard-removed.
+//  • FY = Oct 1 → Sep 30. Quarter + cumulative logic lives in code (fy util).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────── Enums ───────────────────────────
+
+enum EdifyRole {
+  CCEO
+  CountryProgramLead
+  CountryDirector
+  RegionalVicePresident
+  ImpactAssessment
+  ProgramAccountant
+  HumanResources
+  ProjectCoordinator
+  PartnerAdmin
+  PartnerFieldOfficer
+  Admin
+}
+
+enum SchoolType {
+  client
+  core
+  potential_core
+  other
+}
+
+enum AccountOwnerStatus {
+  matched
+  unmatched
+  pending
+}
+
+enum DuplicateStatus {
+  none
+  potential
+  confirmed
+  not_duplicate
+  merged
+}
+
+enum ClusterStatus {
+  unclustered
+  clustered
+  needs_review
+}
+
+enum SsaStatus {
+  not_done
+  scheduled
+  partner_assigned
+  done
+}
+
+enum PlanningReadiness {
+  locked
+  limited
+  ready
+}
+
+enum SsaIntervention {
+  teaching_and_learning
+  financial_health
+  christlike_behaviour
+  exposure_to_word_of_god
+  government_requirements
+  leadership
+  education_technology
+  learning_environment
+}
+
+enum ActivityType {
+  school_visit
+  follow_up_visit
+  coaching_visit
+  in_school_support
+  training
+  school_improvement_training
+  cluster_meeting
+  cluster_training
+  ssa_activity
+  project_activity
+  partner_activity
+  core_visit
+  core_training
+}
+
+enum DeliveryType {
+  staff
+  partner
+}
+
+enum ActivityStatus {
+  not_planned
+  planned
+  scheduled
+  assigned_to_partner
+  partner_scheduled
+  in_progress
+  evidence_uploaded
+  evidence_accepted
+  salesforce_id_required
+  awaiting_ia_verification
+  ia_verified
+  accountant_confirmed
+  completed
+  returned
+  rejected
+  rescheduled
+}
+
+enum EvidenceStatus {
+  none
+  uploaded
+  accepted
+  returned
+  rejected
+}
+
+enum EvidenceKind {
+  visit_form
+  school_stamp
+  attendance_form
+  meeting_minutes
+  resolutions
+  evaluation_form
+  assessment_form
+  photo
+  pdf
+  project_report
+  coaching_notes
+}
+
+enum VerificationStatus {
+  pending
+  confirmed
+  returned
+  flagged
+}
+
+enum SalesforceActivityType {
+  visit
+  training
+}
+
+enum SalesforceSyncStatus {
+  not_synced
+  pending
+  synced
+  error
+}
+
+enum PaymentStatus {
+  none
+  pending_ia
+  ia_confirmed
+  pl_approval_required
+  pl_approved
+  accountant_cleared
+  paid
+  netsuite_accountability
+  closed
+  rejected
+}
+
+enum PaymentPath {
+  partner
+  staff
+}
+
+enum ProjectCategory {
+  intervention_specific
+  pilot
+  selective_limited
+}
+
+enum NotificationPriority {
+  low
+  normal
+  high
+  urgent
+}
+
+enum MessageStatus {
+  unread
+  read
+  archived
+}
+
+enum BudgetView {
+  summary
+  detailed
+}
+
+enum StaffOnboardingState {
+  pending
+  active
+  suspended
+}
+
+// ─────────────────────── Auth / RBAC ───────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  name         String
+  roles        EdifyRole[]
+  activeRole   EdifyRole
+  isActive     Boolean   @default(true)
+  staffProfile StaffProfile?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  auditLogs    AuditLog[]   @relation("AuditActor")
+  notifications Notification[]
+  sentMessages Message[]    @relation("MessageSender")
+}
+
+model Permission {
+  id          String           @id @default(cuid())
+  key         String           @unique // e.g. "school.upload", "budget.approve"
+  description String?
+  roles       RolePermission[]
+  createdAt   DateTime         @default(now())
+}
+
+model RolePermission {
+  id           String     @id @default(cuid())
+  role         EdifyRole
+  permission   Permission @relation(fields: [permissionId], references: [id])
+  permissionId String
+  createdAt    DateTime   @default(now())
+
+  @@unique([role, permissionId])
+}
+
+// ─────────────────────── Staff / Supervisors ───────────────────────
+
+model StaffProfile {
+  id              String   @id @default(cuid())
+  user            User     @relation(fields: [userId], references: [id])
+  userId          String   @unique
+  staffNumber     String?  @unique
+  title           String?
+  primaryDistrict District? @relation("StaffPrimaryDistrict", fields: [primaryDistrictId], references: [id])
+  primaryDistrictId String?
+  onboardingState StaffOnboardingState @default(pending)
+
+  supervisorLinks   StaffSupervisorAssignment[] @relation("Supervisee")
+  superviseeLinks   StaffSupervisorAssignment[] @relation("Supervisor")
+  geographyLinks    StaffGeographyAssignment[]
+  schoolLinks       StaffSchoolAssignment[]
+  targetProfiles    StaffTargetProfile[]
+  ownedSchools      School[]   @relation("SchoolAccountOwner")
+  responsibleActivities Activity[] @relation("ActivityResponsible")
+  monitoredActivities   Activity[] @relation("ActivityMonitor")
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  deletedAt       DateTime?
+}
+
+model StaffSupervisorAssignment {
+  id           String       @id @default(cuid())
+  supervisee   StaffProfile @relation("Supervisee", fields: [superviseeId], references: [id])
+  superviseeId String
+  supervisor   StaffProfile @relation("Supervisor", fields: [supervisorId], references: [id])
+  supervisorId String
+  createdAt    DateTime     @default(now())
+
+  @@unique([superviseeId, supervisorId])
+}
+
+model StaffGeographyAssignment {
+  id         String       @id @default(cuid())
+  staff      StaffProfile @relation(fields: [staffId], references: [id])
+  staffId    String
+  region     Region?      @relation(fields: [regionId], references: [id])
+  regionId   String?
+  district   District?    @relation(fields: [districtId], references: [id])
+  districtId String?
+  createdAt  DateTime     @default(now())
+}
+
+model StaffSchoolAssignment {
+  id        String       @id @default(cuid())
+  staff     StaffProfile @relation(fields: [staffId], references: [id])
+  staffId   String
+  school    School       @relation(fields: [schoolId], references: [id])
+  schoolId  String
+  createdAt DateTime     @default(now())
+
+  @@unique([staffId, schoolId])
+}
+
+model StaffTargetProfile {
+  id        String       @id @default(cuid())
+  staff     StaffProfile @relation(fields: [staffId], references: [id])
+  staffId   String
+  fy        String       // "2026"
+  visitsTarget    Int    @default(0)
+  trainingsTarget Int    @default(0)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@unique([staffId, fy])
+}
+
+// ─────────────────────── Geography ───────────────────────
+
+model Region {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  code      String?    @unique
+  districts District[]
+  schools   School[]
+  clusters  Cluster[]
+  staffGeo  StaffGeographyAssignment[]
+  createdAt DateTime   @default(now())
+}
+
+model District {
+  id         String      @id @default(cuid())
+  name       String
+  code       String?     @unique // canonical UG-D-* id
+  region     Region      @relation(fields: [regionId], references: [id])
+  regionId   String
+  subCounties SubCounty[]
+  schools    School[]
+  clusters   Cluster[]
+  staffGeo   StaffGeographyAssignment[]
+  staffPrimary StaffProfile[] @relation("StaffPrimaryDistrict")
+  createdAt  DateTime    @default(now())
+
+  @@unique([regionId, name])
+}
+
+model SubCounty {
+  id         String    @id @default(cuid())
+  name       String
+  district   District  @relation(fields: [districtId], references: [id])
+  districtId String
+  parishes   Parish[]
+  schools    School[]
+  createdAt  DateTime  @default(now())
+
+  @@unique([districtId, name])
+}
+
+model Parish {
+  id          String    @id @default(cuid())
+  name        String
+  subCounty   SubCounty @relation(fields: [subCountyId], references: [id])
+  subCountyId String
+  schools     School[]
+  createdAt   DateTime  @default(now())
+
+  @@unique([subCountyId, name])
+}
+
+// ─────────────────────── School Directory ───────────────────────
+
+model School {
+  id            String   @id @default(cuid())
+  schoolId      String   @unique // human/operational id used across the app
+  name          String
+  region        Region   @relation(fields: [regionId], references: [id])
+  regionId      String
+  district      District @relation(fields: [districtId], references: [id])
+  districtId    String
+  subCounty     SubCounty? @relation(fields: [subCountyId], references: [id])
+  subCountyId   String?
+  parish        Parish?  @relation(fields: [parishId], references: [id])
+  parishId      String?
+
+  shippingAddress     String?
+  schoolPhone         String?
+  primaryContactName  String?
+  primaryContactPhone String?
+  enrollment          Int?
+  schoolType          SchoolType @default(client)
+
+  accountOwner        StaffProfile? @relation("SchoolAccountOwner", fields: [accountOwnerId], references: [id])
+  accountOwnerId      String?
+  accountOwnerNameRaw String?  // as uploaded, before matching
+  accountOwnerStatus  AccountOwnerStatus @default(pending)
+  duplicateStatus     DuplicateStatus    @default(none)
+
+  cluster        Cluster? @relation(fields: [clusterId], references: [id])
+  clusterId      String?
+  clusterStatus  ClusterStatus @default(unclustered)
+
+  currentFySsaStatus  SsaStatus         @default(not_done)
+  planningReadiness   PlanningReadiness @default(locked)
+
+  // Salesforce-ready (not integrated yet)
+  salesforceAccountId   String?
+  salesforceSyncStatus  SalesforceSyncStatus @default(not_synced)
+  salesforceLastSyncedAt DateTime?
+  salesforceSyncError    String?
+
+  createdByIa   Boolean  @default(false)
+  uploadBatch   UploadBatch? @relation(fields: [uploadBatchId], references: [id])
+  uploadBatchId String?
+
+  portfolioAssignments StaffSchoolAssignment[]
+  clusterAssignments   SchoolClusterAssignment[]
+  ssaRecords           SsaRecord[]
+  enrollmentHistory    SchoolEnrollmentHistory[]
+  activities           Activity[]
+  duplicateCandidates  SchoolDuplicateCandidate[] @relation("DupSchool")
+  duplicateMatches     SchoolDuplicateCandidate[] @relation("DupCandidate")
+  projectAssignments   ProjectSchoolAssignment[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([regionId])
+  @@index([districtId])
+  @@index([clusterId])
+  @@index([schoolType])
+}
+
+model UploadBatch {
+  id          String   @id @default(cuid())
+  source      String   @default("manual") // manual | csv | future:salesforce
+  fileName    String?
+  uploadedBy  String   // userId
+  rowCount    Int      @default(0)
+  acceptedCount Int    @default(0)
+  flaggedCount  Int    @default(0)
+  schools     School[]
+  ownerMaps   SchoolAccountOwnerUploadMap[]
+  createdAt   DateTime @default(now())
+}
+
+model SchoolAccountOwnerUploadMap {
+  id            String   @id @default(cuid())
+  uploadBatch   UploadBatch @relation(fields: [uploadBatchId], references: [id])
+  uploadBatchId String
+  schoolIdRaw   String
+  ownerNameRaw  String
+  matchedStaffId String?
+  matched       Boolean  @default(false)
+  createdAt     DateTime @default(now())
+}
+
+model SchoolDuplicateCandidate {
+  id           String   @id @default(cuid())
+  school       School   @relation("DupSchool", fields: [schoolId], references: [id])
+  schoolId     String
+  candidate    School   @relation("DupCandidate", fields: [candidateId], references: [id])
+  candidateId  String
+  score        Int      // 0-100 similarity
+  reasons      String[] // ["name","phone","district"]
+  resolved     Boolean  @default(false)
+  resolution   String?  // merged | not_duplicate | archived
+  createdAt    DateTime @default(now())
+
+  @@unique([schoolId, candidateId])
+}
+
+// ─────────────────────── Clusters ───────────────────────
+
+model Cluster {
+  id         String   @id @default(cuid())
+  name       String
+  region     Region   @relation(fields: [regionId], references: [id])
+  regionId   String
+  district   District @relation(fields: [districtId], references: [id])
+  districtId String
+  subCountyName String?
+  schools    School[]
+  assignments SchoolClusterAssignment[]
+  activities Activity[]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  deletedAt  DateTime?
+
+  @@index([districtId])
+}
+
+model SchoolClusterAssignment {
+  id        String   @id @default(cuid())
+  school    School   @relation(fields: [schoolId], references: [id])
+  schoolId  String
+  cluster   Cluster  @relation(fields: [clusterId], references: [id])
+  clusterId String
+  assignedBy String  // userId
+  createdAt DateTime @default(now())
+
+  @@unique([schoolId, clusterId])
+}
+
+// ─────────────────────── SSA ───────────────────────
+
+model SsaRecord {
+  id          String   @id @default(cuid())
+  school      School   @relation(fields: [schoolId], references: [id])
+  schoolId    String
+  dateOfSsa   DateTime
+  fy          String
+  quarter     String   // Q1..Q4
+  newEnrollment Int?
+  averageScore  Float?
+  scores      SsaScore[]
+
+  // Salesforce-ready verification of the SSA itself
+  salesforceId String?
+  verificationStatus VerificationStatus @default(pending)
+
+  uploadedBy  String   // userId (IA)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  @@index([schoolId])
+  @@index([fy])
+}
+
+model SsaScore {
+  id           String          @id @default(cuid())
+  ssaRecord    SsaRecord       @relation(fields: [ssaRecordId], references: [id])
+  ssaRecordId  String
+  intervention SsaIntervention
+  score        Float
+
+  @@unique([ssaRecordId, intervention])
+}
+
+model SchoolEnrollmentHistory {
+  id         String   @id @default(cuid())
+  school     School   @relation(fields: [schoolId], references: [id])
+  schoolId   String
+  fy         String
+  enrollment Int
+  recordedAt DateTime @default(now())
+
+  @@unique([schoolId, fy])
+}
+
+// ─────────────────────── Activities ───────────────────────
+
+model Activity {
+  id            String       @id @default(cuid())
+  activityType  ActivityType
+  school        School?      @relation(fields: [schoolId], references: [id])
+  schoolId      String?
+  cluster       Cluster?     @relation(fields: [clusterId], references: [id])
+  clusterId     String?
+  project       Project?     @relation(fields: [projectId], references: [id])
+  projectId     String?
+
+  fy            String
+  quarter       String
+  month         Int?
+  week          Int?
+  scheduledDate DateTime?
+  plannedMonth  Int?
+  plannedWeek   Int?
+
+  responsibleStaff   StaffProfile? @relation("ActivityResponsible", fields: [responsibleStaffId], references: [id])
+  responsibleStaffId String?
+  monitoredByStaff   StaffProfile? @relation("ActivityMonitor", fields: [monitoredByStaffId], references: [id])
+  monitoredByStaffId String?
+  assignedPartner    Partner?      @relation(fields: [assignedPartnerId], references: [id])
+  assignedPartnerId  String?
+  deliveryType       DeliveryType  @default(staff)
+
+  purposeIntervention SsaIntervention?
+  status        ActivityStatus  @default(not_planned)
+  evidenceStatus EvidenceStatus @default(none)
+
+  // Salesforce-ready
+  salesforceActivityId   String?
+  salesforceActivityType SalesforceActivityType?
+
+  iaVerificationStatus VerificationStatus @default(pending)
+  iaConfirmedAt        DateTime?
+  iaConfirmedBy        String?
+  paymentStatus        PaymentStatus      @default(none)
+
+  // Training/cluster-meeting completion detail
+  teachersAttended    Int?
+  leadersAttended     Int?
+  otherParticipants   Int?
+  nextMeetingDate     DateTime?
+
+  evidence      EvidenceRecord[]
+  verification  ActivityCompletionVerification?
+  paymentRequest PaymentRequest?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([schoolId])
+  @@index([clusterId])
+  @@index([fy, quarter])
+  @@index([responsibleStaffId])
+  @@index([status])
+}
+
+// ─────────────────────── Evidence ───────────────────────
+
+model EvidenceRecord {
+  id          String       @id @default(cuid())
+  activity    Activity     @relation(fields: [activityId], references: [id])
+  activityId  String
+  kind        EvidenceKind
+  uri         String
+  notes       String?
+  uploadedBy  String       // userId (staff or partner)
+  status      EvidenceStatus @default(uploaded)
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  reviewNote  String?
+  createdAt   DateTime     @default(now())
+
+  @@index([activityId])
+}
+
+// ─────────────── Salesforce verification (manual) ───────────────
+
+model ActivityCompletionVerification {
+  id            String   @id @default(cuid())
+  activity      Activity @relation(fields: [activityId], references: [id])
+  activityId    String   @unique
+  salesforceId  String   // SV- or TS-
+  enteredBy     String   // responsible staff userId
+  enteredAt     DateTime @default(now())
+  status        VerificationStatus @default(pending)
+  iaActorId     String?
+  iaActionAt    DateTime?
+  iaNote        String?
+}
+
+// ─────────────────────── Payments ───────────────────────
+
+model PaymentRequest {
+  id          String      @id @default(cuid())
+  activity    Activity    @relation(fields: [activityId], references: [id])
+  activityId  String      @unique
+  path        PaymentPath
+  amount      Float?
+  status      PaymentStatus @default(pending_ia)
+  netsuiteExpenseId String?
+  actions     PaymentActionLog[]
+  disbursement PaymentDisbursement?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+}
+
+model PaymentActionLog {
+  id              String   @id @default(cuid())
+  paymentRequest  PaymentRequest @relation(fields: [paymentRequestId], references: [id])
+  paymentRequestId String
+  action          String   // ia_confirmed | pl_approved | accountant_cleared | paid | netsuite_recorded
+  actorId         String
+  note            String?
+  createdAt       DateTime @default(now())
+}
+
+model PaymentDisbursement {
+  id              String   @id @default(cuid())
+  paymentRequest  PaymentRequest @relation(fields: [paymentRequestId], references: [id])
+  paymentRequestId String  @unique
+  amount          Float
+  clearedBy       String   // accountant userId
+  paidAt          DateTime @default(now())
+  reference       String?
+}
+
+// ─────────────────────── Annual plan & budget ───────────────────────
+
+model AnnualPlan {
+  id         String   @id @default(cuid())
+  fy         String
+  ownerStaffId String?
+  status     String   @default("draft") // draft | submitted | approved | returned
+  activities AnnualPlanActivity[]
+  budgetVersions BudgetVersion[]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([fy, ownerStaffId])
+}
+
+model AnnualPlanActivity {
+  id           String   @id @default(cuid())
+  annualPlan   AnnualPlan @relation(fields: [annualPlanId], references: [id])
+  annualPlanId String
+  activityType ActivityType
+  schoolId     String?
+  clusterId    String?
+  quarter      String
+  month        Int?
+  week         Int?
+  budgetLines  ActivityBudgetLine[]
+  createdAt    DateTime @default(now())
+}
+
+model ActivityBudgetLine {
+  id                  String   @id @default(cuid())
+  annualPlanActivity  AnnualPlanActivity @relation(fields: [annualPlanActivityId], references: [id])
+  annualPlanActivityId String
+  costSettingKey      String
+  quantity            Float    @default(1)
+  unitCost            Float
+  amount              Float
+  createdAt           DateTime @default(now())
+}
+
+model BudgetVersion {
+  id           String   @id @default(cuid())
+  annualPlan   AnnualPlan @relation(fields: [annualPlanId], references: [id])
+  annualPlanId String
+  version      Int      @default(1)
+  total        Float    @default(0)
+  approvals    BudgetApproval[]
+  createdAt    DateTime @default(now())
+}
+
+model BudgetApproval {
+  id              String   @id @default(cuid())
+  budgetVersion   BudgetVersion @relation(fields: [budgetVersionId], references: [id])
+  budgetVersionId String
+  approverId      String
+  decision        String   // approved | returned
+  note            String?
+  createdAt       DateTime @default(now())
+}
+
+model MonthlyFundRequest {
+  id        String   @id @default(cuid())
+  fy        String
+  month     Int
+  staffId   String?
+  amount    Float
+  status    String   @default("submitted")
+  createdAt DateTime @default(now())
+}
+
+model CostSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique // staff_visit_transport_primary, lunch, partner_visit_lump_sum, ...
+  label     String
+  unitCost  Float
+  fy        String?
+  createdBy String?  // CD userId
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─────────────────────── Special projects ───────────────────────
+
+model Project {
+  id          String          @id @default(cuid())
+  name        String
+  category    ProjectCategory
+  intervention SsaIntervention?
+  managerStaffId String?
+  schoolAssignments  ProjectSchoolAssignment[]
+  partnerAssignments ProjectPartnerAssignment[]
+  activities  Activity[]
+  impactSnapshots ProjectImpactSnapshot[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+}
+
+model ProjectSchoolAssignment {
+  id        String  @id @default(cuid())
+  project   Project @relation(fields: [projectId], references: [id])
+  projectId String
+  school    School  @relation(fields: [schoolId], references: [id])
+  schoolId  String
+  createdAt DateTime @default(now())
+
+  @@unique([projectId, schoolId])
+}
+
+model ProjectPartnerAssignment {
+  id        String  @id @default(cuid())
+  project   Project @relation(fields: [projectId], references: [id])
+  projectId String
+  partner   Partner @relation(fields: [partnerId], references: [id])
+  partnerId String
+  createdAt DateTime @default(now())
+
+  @@unique([projectId, partnerId])
+}
+
+model ProjectImpactSnapshot {
+  id        String  @id @default(cuid())
+  project   Project @relation(fields: [projectId], references: [id])
+  projectId String
+  fy        String
+  metricsJson Json
+  createdAt DateTime @default(now())
+}
+
+// ─────────────────────── Partners ───────────────────────
+
+model Partner {
+  id        String   @id @default(cuid())
+  name      String
+  regionName String?
+  trainsOn  String[]
+  notes     String?
+  activities Activity[]
+  projectAssignments ProjectPartnerAssignment[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+}
+
+// ─────────────────────── Messages & notifications ───────────────────────
+
+model MessageThread {
+  id          String   @id @default(cuid())
+  subject     String
+  contextType String?
+  contextId   String?
+  messages    Message[]
+  createdAt   DateTime @default(now())
+}
+
+model Message {
+  id        String        @id @default(cuid())
+  thread    MessageThread @relation(fields: [threadId], references: [id])
+  threadId  String
+  sender    User          @relation("MessageSender", fields: [senderId], references: [id])
+  senderId  String
+  body      String
+  status    MessageStatus @default(unread)
+  createdAt DateTime      @default(now())
+}
+
+model Notification {
+  id            String   @id @default(cuid())
+  recipient     User     @relation(fields: [recipientId], references: [id])
+  recipientId   String
+  title         String
+  body          String?
+  contextType   String?
+  contextId     String?
+  targetRoute   String?
+  actionRequired Boolean @default(false)
+  priority      NotificationPriority @default(normal)
+  status        MessageStatus @default(unread)
+  createdAt     DateTime @default(now())
+
+  @@index([recipientId, status])
+}
+
+// ─────────────────────── Audit ───────────────────────
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  action      String   // "school.upload", "ia.confirm", ...
+  subjectKind String?
+  subjectId   String?
+  actor       User?    @relation("AuditActor", fields: [actorId], references: [id])
+  actorId     String?
+  actorRole   EdifyRole?
+  payload     Json?
+  createdAt   DateTime @default(now())
+
+  @@index([subjectKind, subjectId])
+  @@index([actorId])
+  @@index([createdAt])
+}
