@@ -16,7 +16,23 @@ export class QuerySchoolsDto extends PaginationDto {
 
   @IsOptional()
   @IsString()
+  subCountyId?: string;
+
+  @IsOptional()
+  @IsString()
   clusterId?: string;
+
+  @IsOptional()
+  @IsString()
+  clusterStatus?: string; // unclustered | clustered | needs_review
+
+  @IsOptional()
+  @IsString()
+  ssaStatus?: string;
+
+  @IsOptional()
+  @IsString()
+  planningReadiness?: string; // locked | limited | ready
 
   @IsOptional()
   @IsString()

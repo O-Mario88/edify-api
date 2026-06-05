@@ -234,7 +234,11 @@ export class SchoolsService {
     }
     if (query.regionId) where.regionId = query.regionId;
     if (query.districtId) where.districtId = query.districtId;
+    if (query.subCountyId) where.subCountyId = query.subCountyId;
     if (query.clusterId) where.clusterId = query.clusterId;
+    if (query.clusterStatus) where.clusterStatus = query.clusterStatus as Prisma.SchoolWhereInput['clusterStatus'];
+    if (query.ssaStatus) where.currentFySsaStatus = query.ssaStatus as Prisma.SchoolWhereInput['currentFySsaStatus'];
+    if (query.planningReadiness) where.planningReadiness = query.planningReadiness as Prisma.SchoolWhereInput['planningReadiness'];
     if (query.schoolType) where.schoolType = query.schoolType as Prisma.SchoolWhereInput['schoolType'];
     if (query.duplicateStatus) where.duplicateStatus = query.duplicateStatus as Prisma.SchoolWhereInput['duplicateStatus'];
     if (query.accountOwnerStatus) where.accountOwnerStatus = query.accountOwnerStatus as Prisma.SchoolWhereInput['accountOwnerStatus'];

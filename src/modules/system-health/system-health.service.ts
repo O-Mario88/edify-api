@@ -34,7 +34,9 @@ export class SystemHealthService {
       this.prisma.school.count({ where: { deletedAt: null, accountOwnerStatus: 'unmatched' } }),
       this.prisma.schoolDuplicateCandidate.count({ where: { resolved: false } }),
       this.prisma.activity.count({ where: { deletedAt: null, schoolId: null, clusterId: null, projectId: null } }),
-      this.prisma.staffProfile.count({ where: { deletedAt: null, onboardingState: 'active', supervisorLinks: { none: {} } } }),
+      // Field staff with no supervisor — exclude top-level roles who supervise
+      // others and legitimately have none (PL/CD/RVP/Admin).
+      this.prisma.staffProfile.count({ where: { deletedAt: null, onboardingState: 'active', supervisorLinks: { none: {} }, superviseeLinks: { none: {} }, user: { roles: { hasSome: ['CCEO', 'ProjectCoordinator', 'PartnerFieldOfficer'] } } } }),
       this.prisma.staffProfile.count({ where: { deletedAt: null, onboardingState: 'active', primaryDistrictId: null } }),
       this.prisma.paymentRequest.count({ where: { status: 'pending_ia' } }),
     ]);
