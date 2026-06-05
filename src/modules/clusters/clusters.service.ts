@@ -77,7 +77,7 @@ export class ClustersService {
     return {
       schoolId, district: school.districtId, subCounty: school.subCounty?.name,
       sameSubCounty: sameSub, sameDistrict,
-      canCreate: true,
+      canCreate: scope.permissions.includes(PERMISSIONS.CLUSTER_ASSIGN),
       hint: sameSub.length === 0 && school.subCountyId ? `No cluster exists for ${school.subCounty?.name}. Create one now.` : undefined,
     };
   }
@@ -107,14 +107,24 @@ export class ClustersService {
       }
     }
 
-    const cluster = await this.prisma.cluster.create({
-      data: {
-        name: dto.name, regionId: dto.regionId, districtId: dto.districtId, subCountyId: dto.subCountyId,
-        subCountyName, clusterType: dto.clusterType ?? ClusterType.mixed,
-        status: needsReview ? 'needs_review' : 'active',
-        overrideReason: needsReview ? dto.overrideReason : undefined, responsibleStaffId: dto.responsibleStaffId,
-      },
-    });
+    let cluster;
+    try {
+      cluster = await this.prisma.cluster.create({
+        data: {
+          name: dto.name, regionId: dto.regionId, districtId: dto.districtId, subCountyId: dto.subCountyId,
+          subCountyName, clusterType: dto.clusterType ?? ClusterType.mixed,
+          status: needsReview ? 'needs_review' : 'active',
+          overrideReason: needsReview ? dto.overrideReason : undefined, responsibleStaffId: dto.responsibleStaffId,
+        },
+      });
+    } catch (e) {
+      // Race backstop: the partial unique index rejected a concurrent 2nd active
+      // cluster for this sub-county (the findFirst check above lost the race).
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new BadRequestException('This sub-county already has an active cluster.');
+      }
+      throw e;
+    }
     await this.audit.log({ action: needsReview ? 'cluster.createOverride' : 'cluster.create', subjectKind: 'Cluster', subjectId: cluster.id, actorId: user.userId, actorRole: user.activeRole, payload: { name: dto.name, subCountyId: dto.subCountyId, districtId: dto.districtId, overrideReason: dto.overrideReason } });
     return cluster;
   }
@@ -128,8 +138,14 @@ export class ClustersService {
       name: dto.name, regionId: school.regionId, districtId: school.districtId, subCountyId: school.subCountyId ?? undefined,
       clusterType: dto.clusterType, overrideReason: dto.overrideReason,
     }, user);
-    const assigned = await this.assignSchool(dto.schoolId, cluster.id, undefined, user);
-    return { cluster, assignment: assigned };
+    try {
+      const assigned = await this.assignSchool(dto.schoolId, cluster.id, undefined, user);
+      return { cluster, assignment: assigned };
+    } catch (e) {
+      // Compensate: don't leave an orphan cluster occupying the sub-county slot.
+      await this.prisma.cluster.update({ where: { id: cluster.id }, data: { deletedAt: new Date(), status: 'inactive' } });
+      throw e;
+    }
   }
 
   // ── Assign (the bridge to planning) ───────────────────────────────
@@ -139,8 +155,13 @@ export class ClustersService {
     if (!school) throw new NotFoundException('School not found or outside your scope');
     const cluster = await this.prisma.cluster.findUnique({ where: { id: clusterId } });
     if (!cluster || cluster.deletedAt) throw new NotFoundException('Cluster not found');
-    // Geography must match (§6/§11).
+    // Scope the cluster too (H4) — a scoped role can't assign into out-of-scope clusters.
+    if (!scope.countryScope && !scope.districtIds.includes(cluster.districtId)) throw new ForbiddenException('Cluster is outside your scope');
+    // Geography must match — district AND sub-county (§4/§10/§11).
     if (cluster.districtId !== school.districtId) throw new BadRequestException('Cluster and school are in different districts');
+    if (cluster.subCountyId && school.subCountyId && cluster.subCountyId !== school.subCountyId) {
+      throw new BadRequestException('Cluster and school are in different sub-counties');
+    }
 
     const previousClusterId = school.clusterId;
     await this.prisma.schoolClusterAssignment.upsert({

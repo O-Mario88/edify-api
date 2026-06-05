@@ -13,8 +13,9 @@ import { PERMISSIONS } from '../../common/rbac/permissions';
 export class SystemHealthController {
   constructor(private readonly health: SystemHealthService) {}
 
+  // Org-wide health counts — restricted to country oversight (CD/IA/Admin).
   @Get()
-  @RequirePermissions(PERMISSIONS.ANALYTICS_VIEW)
+  @RequirePermissions(PERMISSIONS.PLANNING_RECALC)
   report() {
     return this.health.report();
   }

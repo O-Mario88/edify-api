@@ -46,12 +46,19 @@ export class ReadinessService {
     const ssaCurrent = !!latest && latest.fy === currentFy;
     const clustered = !!school.clusterId && school.clusterStatus === 'clustered';
 
+    // Authoritative SSA status — keeps the stored enum and the SSA record from
+    // drifting (M3): a current-FY record → done; a stale 'done' with no current
+    // record → not_done; otherwise preserve scheduled/partner_assigned.
+    let ssaStatus = school.currentFySsaStatus;
+    if (ssaCurrent) ssaStatus = 'done';
+    else if (ssaStatus === 'done') ssaStatus = 'not_done';
+
     const planningReadiness = this.coarse(clustered, ssaCurrent);
     const updated = await this.prisma.school.update({
       where: { id: schoolId },
       data: {
         clusterStatus: clustered ? 'clustered' : (school.clusterStatus === 'needs_review' ? 'needs_review' : 'unclustered'),
-        currentFySsaStatus: ssaCurrent ? 'done' : school.currentFySsaStatus,
+        currentFySsaStatus: ssaStatus,
         planningReadiness,
       },
     });

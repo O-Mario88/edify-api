@@ -41,7 +41,7 @@ export class PlanningService {
     const base = await this.baseWhere(user, f);
     const buckets: { key: string; label: string; where: Prisma.SchoolWhereInput }[] = [
       { key: 'notYetClustered', label: 'Not Yet Clustered', where: { ...base, clusterStatus: { in: ['unclustered', 'needs_review'] } } },
-      { key: 'clusteredSsaRequired', label: 'Clustered Schools Missing SSA', where: { ...base, clusterStatus: 'clustered', currentFySsaStatus: 'not_done' } },
+      { key: 'clusteredSsaRequired', label: 'Clustered Schools Missing SSA', where: { ...base, clusterStatus: 'clustered', currentFySsaStatus: { in: ['not_done', 'partner_assigned'] } } },
       { key: 'sitScheduledSsaMissing', label: 'SIT Scheduled, SSA Missing', where: { ...base, clusterStatus: 'clustered', currentFySsaStatus: 'scheduled' } },
       { key: 'readyToPlan', label: 'SSA Complete, Ready to Plan', where: { ...base, clusterStatus: 'clustered', currentFySsaStatus: 'done', schoolType: { not: 'core' } } },
       { key: 'coreSchoolPlanning', label: 'Core School Planning', where: { ...base, clusterStatus: 'clustered', currentFySsaStatus: 'done', schoolType: 'core' } },
