@@ -12,7 +12,7 @@
 
 import {
   PrismaClient, EdifyRole, SchoolType, SsaIntervention, ActivityType, ActivityStatus,
-  ClusterType, ClusterRecordStatus,
+  ClusterType, ClusterRecordStatus, ProjectCategory, EvidenceKind, PaymentPath, PaymentStatus,
 } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { ROLE_PERMISSIONS } from '../src/common/rbac/permissions';
@@ -228,11 +228,131 @@ async function seedMessagesAndNotifications() {
   console.log(`✓ mock: ${notifs.length} notifications, ${msgs.length} messages (workflow-connected)`);
 }
 
+// All remaining domains so the whole workflow is testable: partners, cost
+// settings, special projects (+ assignments/activities/impact), evidence,
+// payments/accountability, annual plan + budget, Salesforce verifications.
+// Each domain is guarded (seeds only when empty) so reseeds stay idempotent.
+async function seedDomains() {
+  // ── Partners ──────────────────────────────────────────────────────
+  const PARTNERS = [
+    { name: 'Literacy Training Uganda', regionName: 'Central', trainsOn: ['Early Grade Reading', 'Teacher Coaching'] },
+    { name: 'Bright Future Education', regionName: 'Northern', trainsOn: ['Numeracy Foundations', 'Leadership'] },
+    { name: 'World Vision', regionName: 'Eastern', trainsOn: ['Christlike Behaviour', 'Child Protection'] },
+    { name: 'EdTech Partners', regionName: 'Western', trainsOn: ['Education Technology'] },
+    { name: 'Bible Society UG', regionName: 'Central', trainsOn: ['Exposure to the Word of God'] },
+  ];
+  let partnerIds: string[] = [];
+  if ((await prisma.partner.count()) === 0) {
+    for (const p of PARTNERS) { const c = await prisma.partner.create({ data: p }); partnerIds.push(c.id); }
+  } else {
+    partnerIds = (await prisma.partner.findMany({ select: { id: true } })).map((p) => p.id);
+  }
+
+  // ── Cost settings (CD-defined) ────────────────────────────────────
+  if ((await prisma.costSetting.count()) === 0) {
+    const COSTS: { key: string; label: string; unitCost: number }[] = [
+      { key: 'staff_visit_transport_primary', label: 'Staff visit transport (primary)', unitCost: 50000 },
+      { key: 'staff_visit_transport_secondary', label: 'Staff visit transport (secondary)', unitCost: 30000 },
+      { key: 'lunch', label: 'Lunch', unitCost: 15000 },
+      { key: 'partner_visit_lump_sum', label: 'Partner visit lump sum', unitCost: 120000 },
+      { key: 'training_session_fee', label: 'Training session fee', unitCost: 200000 },
+      { key: 'venue', label: 'Venue', unitCost: 150000 },
+      { key: 'meals_per_participant', label: 'Meals per participant', unitCost: 12000 },
+      { key: 'cluster_meeting_cost', label: 'Cluster meeting cost', unitCost: 300000 },
+      { key: 'admin_stationery', label: 'Admin — stationery', unitCost: 80000 },
+    ];
+    for (const c of COSTS) await prisma.costSetting.create({ data: { ...c, fy: '2026', createdBy: 'mock_seed' } });
+  }
+
+  // ── Special projects + assignments + activities + impact ──────────
+  if ((await prisma.project.count()) === 0) {
+    const PROJECTS: { name: string; category: ProjectCategory; intervention?: SsaIntervention }[] = [
+      { name: 'Literacy and Numeracy', category: 'intervention_specific', intervention: 'teaching_and_learning' },
+      { name: 'EdTech Pilot', category: 'pilot', intervention: 'education_technology' },
+      { name: 'Bible Project', category: 'selective_limited', intervention: 'exposure_to_word_of_god' },
+      { name: 'CC-SEL', category: 'intervention_specific', intervention: 'christlike_behaviour' },
+    ];
+    const schoolPool = await prisma.school.findMany({ where: { deletedAt: null }, select: { id: true, accountOwnerId: true }, take: 80 });
+    let pi = 0;
+    for (const p of PROJECTS) {
+      const project = await prisma.project.create({ data: { name: p.name, category: p.category, intervention: p.intervention } });
+      // assign 6 distinct schools per project (non-overlapping slices)
+      const slice = schoolPool.slice(pi * 6, pi * 6 + 6); pi++;
+      for (const s of slice) {
+        await prisma.projectSchoolAssignment.create({ data: { projectId: project.id, schoolId: s.id } });
+      }
+      // 1 partner per project
+      if (partnerIds.length) await prisma.projectPartnerAssignment.create({ data: { projectId: project.id, partnerId: partnerIds[pi % partnerIds.length] } });
+      // 2 project activities on the first assigned school
+      if (slice[0]) {
+        for (const at of ['project_activity'] as ActivityType[]) {
+          await prisma.activity.create({ data: { activityType: at, schoolId: slice[0].id, projectId: project.id, fy: '2026', quarter: 'Q2', responsibleStaffId: slice[0].accountOwnerId ?? undefined, deliveryType: 'partner', assignedPartnerId: partnerIds[0], status: 'scheduled', purposeIntervention: p.intervention } });
+        }
+      }
+      await prisma.projectImpactSnapshot.create({ data: { projectId: project.id, fy: '2026', metricsJson: { baselineAvg: 5.8, latestAvg: 7.1, change: 1.3, intervention: p.intervention } } });
+    }
+  }
+
+  // ── Evidence on completed activities ──────────────────────────────
+  if ((await prisma.evidenceRecord.count()) === 0) {
+    const acts = await prisma.activity.findMany({ where: { status: 'completed' }, select: { id: true, deliveryType: true }, take: 40 });
+    const kinds: EvidenceKind[] = ['visit_form', 'attendance_form', 'meeting_minutes', 'photo'];
+    let i = 0;
+    for (const a of acts) {
+      const status = a.deliveryType === 'partner' ? (i % 5 === 0 ? 'returned' : 'accepted') : 'accepted';
+      await prisma.evidenceRecord.create({ data: { activityId: a.id, kind: kinds[i % kinds.length], uri: `https://evidence.local/${a.id}.pdf`, uploadedBy: 'mock_seed', status, reviewedBy: status === 'accepted' ? 'mock_seed' : undefined, reviewedAt: status === 'accepted' ? new Date() : undefined } });
+      i++;
+    }
+  }
+
+  // ── Salesforce verifications + payments/accountability ────────────
+  if ((await prisma.paymentRequest.count()) === 0) {
+    const verified = await prisma.activity.findMany({ where: { iaVerificationStatus: 'confirmed', salesforceActivityId: { not: null } }, select: { id: true, deliveryType: true, assignedPartnerId: true, salesforceActivityId: true }, take: 60 });
+    let i = 0;
+    for (const a of verified) {
+      // verification record
+      await prisma.activityCompletionVerification.upsert({
+        where: { activityId: a.id }, update: {},
+        create: { activityId: a.id, salesforceId: a.salesforceActivityId!, enteredBy: 'mock_seed', status: 'confirmed', iaActorId: 'mock_seed', iaActionAt: new Date() },
+      }).catch(() => undefined);
+      // payment (partner) or accountability (staff)
+      const isPartner = a.deliveryType === 'partner' && !!a.assignedPartnerId;
+      const statuses: PaymentStatus[] = isPartner
+        ? ['ia_confirmed', 'pl_approved', 'accountant_cleared', 'paid']
+        : ['netsuite_accountability', 'closed'];
+      const status = statuses[i % statuses.length];
+      const pr = await prisma.paymentRequest.create({ data: { activityId: a.id, path: isPartner ? PaymentPath.partner : PaymentPath.staff, amount: isPartner ? 120000 : 50000, status, netsuiteExpenseId: !isPartner ? `NS-${1000 + i}` : undefined } });
+      await prisma.paymentActionLog.create({ data: { paymentRequestId: pr.id, action: 'ia_confirmed', actorId: 'mock_seed' } });
+      if (status === 'paid') await prisma.paymentDisbursement.create({ data: { paymentRequestId: pr.id, amount: 120000, clearedBy: 'mock_seed', reference: `PAY-${2000 + i}` } });
+      i++;
+    }
+  }
+
+  // ── Annual plan + budget ──────────────────────────────────────────
+  if ((await prisma.annualPlan.count()) === 0) {
+    const plan = await prisma.annualPlan.create({ data: { fy: '2026', status: 'submitted' } });
+    for (const q of ['Q1', 'Q2', 'Q3', 'Q4']) {
+      const apa = await prisma.annualPlanActivity.create({ data: { annualPlanId: plan.id, activityType: 'school_visit', quarter: q, month: 1 } });
+      await prisma.activityBudgetLine.create({ data: { annualPlanActivityId: apa.id, costSettingKey: 'staff_visit_transport_primary', quantity: 10, unitCost: 50000, amount: 500000 } });
+    }
+    const bv = await prisma.budgetVersion.create({ data: { annualPlanId: plan.id, version: 1, total: 2000000 } });
+    await prisma.budgetApproval.create({ data: { budgetVersionId: bv.id, approverId: 'mock_seed', decision: 'approved' } });
+    await prisma.monthlyFundRequest.create({ data: { fy: '2026', month: 2, amount: 500000, status: 'submitted' } });
+  }
+
+  const [partners, projects, evidence, payments, plans, costs] = await Promise.all([
+    prisma.partner.count(), prisma.project.count(), prisma.evidenceRecord.count(),
+    prisma.paymentRequest.count(), prisma.annualPlan.count(), prisma.costSetting.count(),
+  ]);
+  console.log(`✓ mock: ${partners} partners, ${projects} projects, ${evidence} evidence, ${payments} payments, ${plans} annual plans, ${costs} cost settings`);
+}
+
 async function main() {
   await seedReference();
   if (IS_PROD) { console.log('• production: skipping mock data'); return; }
   if (!MOCK) { console.log('• ENABLE_MOCK_DATA=false: skipping mock data'); return; }
   await seedMock();
+  await seedDomains();
   await seedMessagesAndNotifications();
 }
 main().then(() => prisma.$disconnect()).catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1); });
