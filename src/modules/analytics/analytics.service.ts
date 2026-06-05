@@ -14,7 +14,8 @@ export class AnalyticsService {
   ) {}
 
   private schoolScope(scope: UserScope): Prisma.SchoolWhereInput {
-    return { deletedAt: null, ...this.scope.schoolWhere(scope) };
+    // Aggregate scope: summary-only roles (RVP) get country-wide counts.
+    return { deletedAt: null, ...this.scope.aggregateSchoolWhere(scope) };
   }
 
   async dashboardSummary(user: AuthUser) {
@@ -62,7 +63,8 @@ export class AnalyticsService {
       where: { schoolId: { in: schoolIds }, deletedAt: null },
       include: { scores: true },
     });
-    const overall = records.length ? Math.round((records.reduce((s, r) => s + (r.averageScore ?? 0), 0) / records.length) * 10) / 10 : 0;
+    const scored = records.filter((r) => r.averageScore != null);
+    const overall = scored.length ? Math.round((scored.reduce((s, r) => s + (r.averageScore ?? 0), 0) / scored.length) * 10) / 10 : 0;
     const acc = new Map<string, { sum: number; n: number }>();
     for (const r of records) for (const sc of r.scores) {
       const cur = acc.get(sc.intervention) ?? { sum: 0, n: 0 };

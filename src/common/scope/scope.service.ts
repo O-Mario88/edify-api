@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { EdifyRole } from '@prisma/client';
+import { EdifyRole, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { permissionsForRole, PermissionKey, PERMISSIONS } from '../rbac/permissions';
 import { AuthUser } from '../auth/auth-user';
@@ -52,9 +52,13 @@ export class ScopeService {
 
     const staffId = user.staffProfileId;
 
-    if (countryScope || summaryOnly) {
-      // Country-wide / summary roles are not row-constrained by geography here;
-      // the repositories treat empty arrays + countryScope=true as "all".
+    if (summaryOnly && staffId) {
+      // RVP sees summary performance — scope to assigned region(s). No
+      // school-level rows (see schoolWhere); analytics get country-wide counts.
+      const geo = await this.prisma.staffGeographyAssignment.findMany({ where: { staffId, regionId: { not: null } }, select: { regionId: true } });
+      regionIds = uniq(geo.map((g) => g.regionId!).filter(Boolean));
+    } else if (countryScope) {
+      // Country roles are not row-constrained by geography here.
     } else if ((role === 'CCEO' || role === 'CountryProgramLead') && staffId) {
       // Own assigned schools + (for PL) supervised staff's schools.
       const ownSchools = await this.prisma.staffSchoolAssignment.findMany({
@@ -116,8 +120,17 @@ export class ScopeService {
     };
   }
 
-  /** Prisma `where` fragment that constrains School queries to the scope. */
-  schoolWhere(scope: UserScope): { id?: { in: string[] } } {
+  /** School constraint for school-LEVEL reads (list/detail). Summary-only roles
+   *  (RVP) receive NO school-level rows — they use aggregate summaries only. */
+  schoolWhere(scope: UserScope): Prisma.SchoolWhereInput {
+    if (scope.countryScope) return {};
+    if (scope.canViewSummaryOnly) return { id: { in: ['__none__'] } };
+    return { id: { in: scope.schoolIds.length ? scope.schoolIds : ['__none__'] } };
+  }
+
+  /** School constraint for AGGREGATE analytics. Summary-only roles see
+   *  country-wide counts (their purpose) but never row-level detail. */
+  aggregateSchoolWhere(scope: UserScope): Prisma.SchoolWhereInput {
     if (scope.countryScope || scope.canViewSummaryOnly) return {};
     return { id: { in: scope.schoolIds.length ? scope.schoolIds : ['__none__'] } };
   }

@@ -25,10 +25,22 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Get('me')
   async me(@CurrentUser() user: AuthUser) {
+    const s = await this.scope.resolveUserScope(user);
+    // Return capability flags, not the internal id sets.
     return {
       ...user,
       permissions: permissionsForRole(user.activeRole),
-      scope: await this.scope.resolveUserScope(user),
+      scope: {
+        countryScope: s.countryScope,
+        canViewSummaryOnly: s.canViewSummaryOnly,
+        canViewSchoolLevelDetail: s.canViewSchoolLevelDetail,
+        canViewPartnerData: s.canViewPartnerData,
+        canViewFinancialData: s.canViewFinancialData,
+        canApprove: s.canApprove,
+        canAssign: s.canAssign,
+        canExport: s.canExport,
+        schoolsInScope: s.countryScope ? null : s.schoolIds.length,
+      },
     };
   }
 }

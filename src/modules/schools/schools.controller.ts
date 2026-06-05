@@ -4,6 +4,7 @@ import { SchoolsService } from './schools.service';
 import { CreateSchoolDto } from './dto/create-school.dto';
 import { BulkUploadDto } from './dto/bulk-upload.dto';
 import { QuerySchoolsDto } from './dto/query-schools.dto';
+import { ResolveDuplicateDto } from './dto/resolve-duplicate.dto';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/rbac/permissions.guard';
 import { RequirePermissions } from '../../common/rbac/require-permissions.decorator';
@@ -44,11 +45,7 @@ export class SchoolsController {
 
   @Post(':id/resolve-duplicate')
   @RequirePermissions(PERMISSIONS.SCHOOL_RESOLVE_DUPLICATE)
-  resolveDuplicate(
-    @Param('id') id: string,
-    @Body('resolution') resolution: 'not_duplicate' | 'merged' | 'archived',
-    @CurrentUser() user: AuthUser,
-  ) {
-    return this.schools.resolveDuplicate(id, resolution, user);
+  resolveDuplicate(@Param('id') id: string, @Body() dto: ResolveDuplicateDto, @CurrentUser() user: AuthUser) {
+    return this.schools.resolveDuplicate(id, dto.resolution, user);
   }
 }

@@ -256,7 +256,9 @@ export class SchoolsService {
   }
 
   async resolveDuplicate(schoolId: string, resolution: 'not_duplicate' | 'merged' | 'archived', actor: AuthUser) {
-    const school = await this.prisma.school.findUniqueOrThrow({ where: { id: schoolId } });
+    const scope = await this.scope.resolveUserScope(actor);
+    const school = await this.prisma.school.findFirst({ where: { id: schoolId, ...this.scope.schoolWhere(scope) } });
+    if (!school) throw new NotFoundException('School not found or outside your scope');
     const statusMap: Record<string, DuplicateStatus> = {
       not_duplicate: DuplicateStatus.not_duplicate, merged: DuplicateStatus.merged, archived: DuplicateStatus.confirmed,
     };

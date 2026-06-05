@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
@@ -27,6 +27,8 @@ export class ClustersService {
   async create(name: string, regionId: string, districtId: string, user: AuthUser) {
     const district = await this.prisma.district.findUnique({ where: { id: districtId } });
     if (!district || district.regionId !== regionId) throw new BadRequestException('district does not belong to region');
+    const scope = await this.scope.resolveUserScope(user);
+    if (!scope.countryScope && !scope.districtIds.includes(districtId)) throw new ForbiddenException('District outside your scope');
     const cluster = await this.prisma.cluster.create({ data: { name, regionId, districtId } });
     await this.audit.log({ action: 'cluster.create', subjectKind: 'Cluster', subjectId: cluster.id, actorId: user.userId, actorRole: user.activeRole, payload: { name } });
     return cluster;
@@ -34,8 +36,9 @@ export class ClustersService {
 
   // The cluster gate: assigning a cluster unlocks (or limits) planning readiness.
   async assignSchool(schoolId: string, clusterId: string, user: AuthUser) {
-    const school = await this.prisma.school.findUnique({ where: { schoolId } });
-    if (!school) throw new NotFoundException('School not found');
+    const scope = await this.scope.resolveUserScope(user);
+    const school = await this.prisma.school.findFirst({ where: { schoolId, deletedAt: null, ...this.scope.schoolWhere(scope) } });
+    if (!school) throw new NotFoundException('School not found or outside your scope');
     const cluster = await this.prisma.cluster.findUnique({ where: { id: clusterId } });
     if (!cluster) throw new NotFoundException('Cluster not found');
 

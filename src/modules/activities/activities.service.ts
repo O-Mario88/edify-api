@@ -1,5 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { ActivityType, Prisma, SalesforceActivityType } from '@prisma/client';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Activity, ActivityType, Prisma, SalesforceActivityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { ScopeService } from '../../common/scope/scope.service';
@@ -23,6 +23,20 @@ export class ActivitiesService {
     const scope = await this.scope.resolveUserScope(user);
     if (scope.countryScope) return null;
     return (await this.prisma.school.findMany({ where: { deletedAt: null, ...this.scope.schoolWhere(scope) }, select: { id: true } })).map((s) => s.id);
+  }
+
+  // Guard mutations against IDOR — an activity must be within the caller's scope.
+  private async assertInScope(activity: Activity, user: AuthUser): Promise<void> {
+    const scope = await this.scope.resolveUserScope(user);
+    if (scope.countryScope) return;
+    // Partner roles may act on partner-delivered work (per-partner identity link
+    // is a TODO — tightened once User↔Partner is wired).
+    if ((scope.activeRole === 'PartnerAdmin' || scope.activeRole === 'PartnerFieldOfficer') && activity.deliveryType === 'partner') return;
+    if (activity.schoolId) {
+      const ids = await this.scopedSchoolIds(user);
+      if (ids && ids.includes(activity.schoolId)) return;
+    }
+    throw new ForbiddenException('Activity is outside your scope');
   }
 
   async list(query: QueryActivitiesDto, user: AuthUser) {
@@ -72,16 +86,24 @@ export class ActivitiesService {
   async complete(id: string, dto: CompleteActivityDto, user: AuthUser) {
     const activity = await this.prisma.activity.findUnique({ where: { id } });
     if (!activity) throw new NotFoundException('Activity not found');
+    await this.assertInScope(activity, user);
     const kind = sfKind(activity.activityType);
     if (!isValidSalesforceId(dto.salesforceId, kind)) {
       throw new BadRequestException(`${kind === 'visit' ? 'SV-' : 'TS-'} Salesforce ID required`);
     }
+    // Trainings/cluster meetings must record attendance.
+    if (kind === 'training' && !((dto.teachersAttended ?? 0) > 0 || (dto.leadersAttended ?? 0) > 0)) {
+      throw new BadRequestException('Training completion requires attendance (teachers and/or school leaders)');
+    }
+    // Partner-delivered evidence must be reviewed (accepted) before it counts;
+    // staff-delivered work is accepted on entry.
+    const evidenceStatus = activity.deliveryType === 'partner' ? 'uploaded' : 'accepted';
     const updated = await this.prisma.activity.update({
       where: { id },
       data: {
         salesforceActivityId: dto.salesforceId.trim(), salesforceActivityType: kind,
         teachersAttended: dto.teachersAttended, leadersAttended: dto.leadersAttended, otherParticipants: dto.otherParticipants,
-        status: 'awaiting_ia_verification', evidenceStatus: 'accepted',
+        status: 'awaiting_ia_verification', evidenceStatus,
       },
     });
     await this.prisma.activityCompletionVerification.upsert({
@@ -102,7 +124,7 @@ export class ActivitiesService {
       data: { status: 'ia_verified', iaVerificationStatus: 'confirmed', iaConfirmedAt: new Date(), iaConfirmedBy: user.userId, paymentStatus: activity.assignedPartnerId ? 'ia_confirmed' : 'netsuite_accountability' },
     });
     await this.prisma.activityCompletionVerification.update({ where: { activityId: id }, data: { status: 'confirmed', iaActorId: user.userId, iaActionAt: new Date() } }).catch(() => undefined);
-    await this.audit.log({ action: 'ia.confirm', subjectKind: 'Activity', subjectId: id, actorId: user.userId, actorRole: user.activeRole });
+    await this.audit.log({ action: 'ia.confirm', subjectKind: 'Activity', subjectId: id, actorId: user.userId, actorRole: user.activeRole, payload: { salesforceId: activity.salesforceActivityId, previousStatus: activity.status } });
     return updated;
   }
 }

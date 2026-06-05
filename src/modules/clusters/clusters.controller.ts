@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ClustersService } from './clusters.service';
+import { AssignClusterDto, CreateClusterDto } from './dto/cluster.dto';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/rbac/permissions.guard';
 import { RequirePermissions } from '../../common/rbac/require-permissions.decorator';
@@ -29,13 +30,13 @@ export class ClustersController {
 
   @Post()
   @RequirePermissions(PERMISSIONS.CLUSTER_ASSIGN)
-  create(@Body() body: { name: string; regionId: string; districtId: string }, @CurrentUser() user: AuthUser) {
-    return this.clusters.create(body.name, body.regionId, body.districtId, user);
+  create(@Body() dto: CreateClusterDto, @CurrentUser() user: AuthUser) {
+    return this.clusters.create(dto.name, dto.regionId, dto.districtId, user);
   }
 
   @Post('assign')
   @RequirePermissions(PERMISSIONS.CLUSTER_ASSIGN)
-  assign(@Body() body: { schoolId: string; clusterId: string }, @CurrentUser() user: AuthUser) {
-    return this.clusters.assignSchool(body.schoolId, body.clusterId, user);
+  assign(@Body() dto: AssignClusterDto, @CurrentUser() user: AuthUser) {
+    return this.clusters.assignSchool(dto.schoolId, dto.clusterId, user);
   }
 }

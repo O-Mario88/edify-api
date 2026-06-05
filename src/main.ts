@@ -12,7 +12,9 @@ async function bootstrap() {
   const logger = new Logger('Bootstrap');
 
   app.use(helmet());
-  app.enableCors();
+  // CORS: allowlist from CORS_ORIGINS (comma-separated); permissive only outside prod.
+  const origins = (config.get<string>('CORS_ORIGINS') ?? '').split(',').map((o) => o.trim()).filter(Boolean);
+  app.enableCors({ origin: origins.length ? origins : config.get('NODE_ENV') !== 'production', credentials: true });
   app.setGlobalPrefix('api');
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }),
