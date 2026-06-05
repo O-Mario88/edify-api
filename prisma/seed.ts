@@ -189,10 +189,50 @@ async function seedMock() {
   console.log(`✓ mock: ${cceos.length} CCEOs, ${pls.length} PLs; all passwords "edify"`);
 }
 
+// Workflow-connected messages + notifications, addressed to real users with
+// context + targetRoute (so the inbox/drawer is database-driven, not hardcoded).
+async function seedMessagesAndNotifications() {
+  const [cd, ia, cceo, accountant, pl] = await Promise.all([
+    prisma.user.findUnique({ where: { email: 'cd@edify.org' } }),
+    prisma.user.findUnique({ where: { email: 'ia@edify.org' } }),
+    prisma.user.findUnique({ where: { email: 'cceo@edify.org' } }),
+    prisma.user.findUnique({ where: { email: 'accountant@edify.org' } }),
+    prisma.user.findUnique({ where: { email: 'pl1@edify.org' } }),
+  ]);
+  if (!cd || !ia || !cceo || !accountant || !pl) return;
+  const sampleSchool = await prisma.school.findFirst({ where: { clusterStatus: 'unclustered' }, select: { schoolId: true, name: true } });
+  const ssaSchool = await prisma.school.findFirst({ where: { currentFySsaStatus: 'not_done', schoolType: 'core' }, select: { schoolId: true, name: true } });
+
+  // Idempotent: clear prior mock_seed notifications/messages so reseeds don't pile up.
+  await prisma.notification.deleteMany({ where: { contextType: 'mock_seed' } });
+
+  const notifs = [
+    { recipientId: cceo.id, title: 'Add to cluster required', body: `${sampleSchool?.name ?? 'A school'} has no cluster — assign one to unlock planning.`, targetRoute: `/core-schools`, actionRequired: true, priority: 'high' as const, contextId: sampleSchool?.schoolId },
+    { recipientId: ia.id, title: 'SSA verification required', body: `Confirm the Salesforce ID for a completed core visit.`, targetRoute: '/data-verification', actionRequired: true, priority: 'high' as const },
+    { recipientId: cceo.id, title: 'SSA required', body: `${ssaSchool?.name ?? 'A core school'} is missing its current-FY SSA.`, targetRoute: '/planning', actionRequired: true, priority: 'normal' as const, contextId: ssaSchool?.schoolId },
+    { recipientId: accountant.id, title: 'Partner payment ready', body: 'An IA-verified partner training is ready for payment.', targetRoute: '/core-schools/payments', actionRequired: true, priority: 'high' as const },
+    { recipientId: pl.id, title: 'CCEO core visit needs sign-off', body: 'A CCEO core visit is awaiting your PL verification.', targetRoute: '/planning/core-schools', actionRequired: true, priority: 'normal' as const },
+    { recipientId: cd.id, title: 'Annual budget approval needed', body: 'A regional annual plan was submitted for approval.', targetRoute: '/budget', actionRequired: true, priority: 'normal' as const },
+  ];
+  for (const n of notifs) await prisma.notification.create({ data: { ...n, contextType: 'mock_seed' } });
+
+  // Messages (threaded), addressed to recipients.
+  const thread = await prisma.messageThread.create({ data: { subject: 'Cluster assignment for unclustered schools', contextType: 'mock_seed' } });
+  const msgs = [
+    { recipientId: cceo.id, senderId: pl.id, body: 'Please cluster your remaining unclustered schools before planning closes.', actionRequired: true, priority: 'high' as const, targetRoute: '/core-schools', category: 'cluster' },
+    { recipientId: ia.id, senderId: cd.id, body: 'Prioritise SSA verification for the new core onboarding cohort.', actionRequired: true, priority: 'normal' as const, targetRoute: '/data-verification', category: 'ssa' },
+    { recipientId: accountant.id, senderId: ia.id, body: 'Two partner trainings are IA-confirmed and ready for payment.', actionRequired: true, priority: 'normal' as const, targetRoute: '/core-schools/payments', category: 'payment' },
+  ];
+  for (const m of msgs) await prisma.message.create({ data: { ...m, threadId: thread.id, contextType: 'mock_seed' } });
+
+  console.log(`✓ mock: ${notifs.length} notifications, ${msgs.length} messages (workflow-connected)`);
+}
+
 async function main() {
   await seedReference();
   if (IS_PROD) { console.log('• production: skipping mock data'); return; }
   if (!MOCK) { console.log('• ENABLE_MOCK_DATA=false: skipping mock data'); return; }
   await seedMock();
+  await seedMessagesAndNotifications();
 }
 main().then(() => prisma.$disconnect()).catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1); });

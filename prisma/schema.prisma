@@ -868,14 +868,23 @@ model MessageThread {
 }
 
 model Message {
-  id        String        @id @default(cuid())
-  thread    MessageThread @relation(fields: [threadId], references: [id])
-  threadId  String
-  sender    User          @relation("MessageSender", fields: [senderId], references: [id])
-  senderId  String
-  body      String
-  status    MessageStatus @default(unread)
-  createdAt DateTime      @default(now())
+  id          String        @id @default(cuid())
+  thread      MessageThread @relation(fields: [threadId], references: [id])
+  threadId    String
+  sender      User          @relation("MessageSender", fields: [senderId], references: [id])
+  senderId    String
+  recipientId String?       // the user this message is addressed to (inbox scope)
+  body        String
+  category    String?
+  contextType String?
+  contextId   String?
+  targetRoute String?
+  priority    NotificationPriority @default(normal)
+  actionRequired Boolean    @default(false)
+  status      MessageStatus @default(unread)
+  createdAt   DateTime      @default(now())
+
+  @@index([recipientId, status])
 }
 
 model Notification {
