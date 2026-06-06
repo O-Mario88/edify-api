@@ -47,6 +47,13 @@ export class SchoolsController {
     return this.schools.getOne(schoolId, user);
   }
 
+  // Scope-aware "Plan Action" resolver for ONE school (spec §10).
+  @Get(':schoolId/next-actions')
+  @RequirePermissions(PERMISSIONS.SCHOOL_VIEW)
+  nextActions(@Param('schoolId') schoolId: string, @Query('fy') fy: string | undefined, @CurrentUser() user: AuthUser) {
+    return this.schools.nextActions(schoolId, user, fy);
+  }
+
   @Post()
   @RequirePermissions(PERMISSIONS.SCHOOL_UPLOAD)
   create(@Body() dto: CreateSchoolDto, @CurrentUser() user: AuthUser) {

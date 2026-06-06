@@ -259,6 +259,56 @@ export class SchoolsService {
     return school;
   }
 
+  // The correct next planning action for ONE school (spec §4/§5/§10). Scoped:
+  // 404 if the school is missing or outside the caller's scope. Gate order is
+  // fixed — cluster → current-FY SSA → recommended/core planning.
+  async nextActions(schoolId: string, actor: AuthUser, fy?: string) {
+    const scope = await this.scope.resolveUserScope(actor);
+    const school = await this.prisma.school.findFirst({
+      where: { schoolId, deletedAt: null, ...this.scope.schoolWhere(scope) },
+      select: {
+        id: true, schoolId: true, name: true, schoolType: true,
+        clusterStatus: true, currentFySsaStatus: true, clusterId: true, planningReadiness: true,
+      },
+    });
+    if (!school) throw new NotFoundException('School not found or outside your scope');
+
+    const clustered = school.clusterStatus === 'clustered';
+    const ssaDone = school.currentFySsaStatus === 'done';
+    const isCore = school.schoolType === 'core';
+
+    let blockingGate: 'NO_CLUSTER' | 'NO_CURRENT_FY_SSA' | null;
+    let allowedActions: string[];
+    let recommendedDelivery: 'staff' | 'partner' | null = null;
+    if (!clustered) {
+      blockingGate = 'NO_CLUSTER';
+      allowedActions = ['ADD_TO_CLUSTER'];
+    } else if (!ssaDone) {
+      blockingGate = 'NO_CURRENT_FY_SSA';
+      allowedActions = ['SCHEDULE_SIT', 'ASSIGN_SSA_TO_PARTNER', 'SCHEDULE_SSA_SELF'];
+    } else if (isCore) {
+      blockingGate = null;
+      allowedActions = ['PLAN_CORE_PACKAGE', 'SCHEDULE_VISIT', 'SCHEDULE_TRAINING', 'ASSIGN_PARTNER'];
+      recommendedDelivery = 'staff';
+    } else {
+      blockingGate = null;
+      allowedActions = ['SCHEDULE_VISIT', 'SCHEDULE_TRAINING', 'ASSIGN_PARTNER'];
+      recommendedDelivery = 'staff';
+    }
+
+    return {
+      school: { id: school.id, schoolId: school.schoolId, name: school.name, schoolType: school.schoolType },
+      fy: fy ?? null,
+      clusterStatus: school.clusterStatus,
+      currentFySsaStatus: school.currentFySsaStatus,
+      planningReadiness: school.planningReadiness,
+      blockingGate,
+      allowedActions,
+      recommendedDelivery,
+      canPlan: scope.canAssign && !scope.canViewSummaryOnly,
+    };
+  }
+
   async resolveDuplicate(schoolId: string, resolution: 'not_duplicate' | 'merged' | 'archived', actor: AuthUser) {
     const scope = await this.scope.resolveUserScope(actor);
     const school = await this.prisma.school.findFirst({ where: { id: schoolId, ...this.scope.schoolWhere(scope) } });
