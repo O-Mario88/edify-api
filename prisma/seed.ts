@@ -11,7 +11,7 @@
 // Uganda sub-county data later without touching components.
 
 import {
-  PrismaClient, EdifyRole, SchoolType, SsaIntervention, ActivityType, ActivityStatus,
+  PrismaClient, Prisma, EdifyRole, SchoolType, SsaIntervention, ActivityType, ActivityStatus,
   ClusterType, ClusterRecordStatus, ProjectCategory, EvidenceKind, PaymentPath, PaymentStatus,
 } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
@@ -37,9 +37,26 @@ function mulberry32(seed: number) {
   return () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 const rnd = mulberry32(2026);
-const NAME_A = ['Bright', 'Hope', 'Grace', 'Faith', 'Sunrise', 'Riverside', 'Unity', 'Victory', 'Mustard Seed', 'Cornerstone', 'New Life', 'Pioneer', 'Excel', 'Trinity', 'Bethel', 'St. Mary', 'St. John', 'Canaan'];
-const NAME_B = ['Primary', 'Junior', 'Academy', 'Community School', 'Christian School', 'Preparatory'];
+const NAME_A = ['Bright', 'Hope', 'Grace', 'Faith', 'Sunrise', 'Riverside', 'Unity', 'Victory', 'Mustard Seed', 'Cornerstone', 'New Life', 'Pioneer', 'Excel', 'Trinity', 'Bethel', 'St. Mary', 'St. John', 'Canaan', 'Greenhill', 'Kings', 'Light', 'Harvest', 'Rock', 'Living Water'];
+const NAME_B = ['Primary', 'Junior', 'Academy', 'Community School', 'Christian School', 'Preparatory', 'Day & Boarding', 'Parents School'];
 const pick = <T>(a: T[]) => a[Math.floor(rnd() * a.length)];
+
+// Realistic dataset scale (replaces the small demo set).
+const TARGET_CORE = 300;
+const TARGET_CLIENT = 600;
+const TOTAL_SCHOOLS = TARGET_CORE + TARGET_CLIENT; // 900
+const NUM_PLS = 4;
+const CCEOS_PER_PL = 5; // → 20 CCEOs (coprime with the 1/3 core split, so each
+                        //   CCEO gets a realistic MIX of core + client, not all-one)
+const PL_OWN_SCHOOLS = 6; // PLs do field work too — a SMALL portfolio (they manage CCEOs)
+const CCEO_NAMES = ['Paul Chinyama', 'Grace Nansubuga', 'Peter Ochieng', 'Sarah Khan', 'Sarah Namutebi', 'James Okot', 'Mary Akello', 'John Tabu', 'Esther Lamwaka', 'David Oloya', 'Ruth Adong', 'Moses Wanyama', 'Janet Achieng', 'Tom Ssemwogerere', 'Brenda Atim', 'Isaac Mukasa', 'Lydia Nakato', 'Henry Okello', 'Patience Auma', 'Caleb Kirya', 'Joy Nabwire', 'Simon Etori', 'Faith Among', 'Daniel Komakech'];
+const PL_NAMES = ['Daniel Mwangi', 'Aisha Dar', 'Samuel Kato', 'Rachel Apio'];
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
 
 async function seedReference() {
   const keys = new Set<string>();
@@ -76,7 +93,7 @@ async function seedMock() {
     { email: 'accountant@edify.org', name: 'Moses Tindi', role: 'ProgramAccountant' },
     { email: 'hr@edify.org', name: 'Hellen Auma', role: 'HumanResources' },
   ];
-  for (const u of baseUsers) await prisma.user.upsert({ where: { email: u.email }, update: {}, create: { email: u.email, name: u.name, passwordHash: hash, roles: [u.role], activeRole: u.role } });
+  for (const u of baseUsers) await prisma.user.upsert({ where: { email: u.email }, update: { name: u.name }, create: { email: u.email, name: u.name, passwordHash: hash, roles: [u.role], activeRole: u.role } });
 
   const districts = await prisma.district.findMany({ include: { region: true } });
 
@@ -90,103 +107,133 @@ async function seedMock() {
     }
   }
 
-  // Supervisors + CCEO owners.
-  const pls = [];
-  for (let i = 1; i <= 3; i++) {
-    const u = await prisma.user.upsert({ where: { email: `pl${i}@edify.org` }, update: {}, create: { email: `pl${i}@edify.org`, name: `Program Lead ${i}`, passwordHash: hash, roles: ['CountryProgramLead'], activeRole: 'CountryProgramLead' } });
-    pls.push(await prisma.staffProfile.upsert({ where: { userId: u.id }, update: {}, create: { userId: u.id, onboardingState: 'active', primaryDistrictId: districts[i % districts.length].id } }));
-  }
-  const cceos = [];
-  const cceoNames = ['Paul Chinyama', 'Daniel Mwangi', 'Grace Nansubuga', 'Peter Ochieng', 'Sarah Khan', 'Sarah Namutebi', 'James Okot', 'Mary Akello', 'John Tabu', 'Esther Lamwaka', 'David Oloya', 'Ruth Adong'];
-  for (let i = 0; i < cceoNames.length; i++) {
-    const email = i === 0 ? 'cceo@edify.org' : `cceo${i}@edify.org`;
-    const u = await prisma.user.upsert({ where: { email }, update: {}, create: { email, name: cceoNames[i], passwordHash: hash, roles: ['CCEO'], activeRole: 'CCEO' } });
+  // ── Staff: PLs (manage CCEOs + a SMALL own portfolio) + CCEOs ──────
+  const pls: { id: string; name: string }[] = [];
+  for (let i = 1; i <= NUM_PLS; i++) {
+    const name = PL_NAMES[i - 1] ?? `Program Lead ${i}`;
+    const u = await prisma.user.upsert({ where: { email: `pl${i}@edify.org` }, update: { name }, create: { email: `pl${i}@edify.org`, name, passwordHash: hash, roles: ['CountryProgramLead'], activeRole: 'CountryProgramLead' } });
     const sp = await prisma.staffProfile.upsert({ where: { userId: u.id }, update: {}, create: { userId: u.id, onboardingState: 'active', primaryDistrictId: districts[i % districts.length].id } });
-    await prisma.staffSupervisorAssignment.upsert({ where: { superviseeId_supervisorId: { superviseeId: sp.id, supervisorId: pls[i % pls.length].id } }, update: {}, create: { superviseeId: sp.id, supervisorId: pls[i % pls.length].id } });
-    cceos.push(sp);
+    pls.push({ id: sp.id, name });
+  }
+  const cceos: { id: string; name: string }[] = [];
+  const NUM_CCEOS = NUM_PLS * CCEOS_PER_PL;
+  for (let i = 0; i < NUM_CCEOS; i++) {
+    const email = i === 0 ? 'cceo@edify.org' : `cceo${i}@edify.org`;
+    const name = CCEO_NAMES[i % CCEO_NAMES.length] + (i >= CCEO_NAMES.length ? ` ${Math.floor(i / CCEO_NAMES.length) + 1}` : '');
+    const u = await prisma.user.upsert({ where: { email }, update: { name }, create: { email, name, passwordHash: hash, roles: ['CCEO'], activeRole: 'CCEO' } });
+    const sp = await prisma.staffProfile.upsert({ where: { userId: u.id }, update: {}, create: { userId: u.id, onboardingState: 'active', primaryDistrictId: districts[i % districts.length].id } });
+    await prisma.staffSupervisorAssignment.create({ data: { superviseeId: sp.id, supervisorId: pls[Math.floor(i / CCEOS_PER_PL)].id } });
+    cceos.push({ id: sp.id, name });
   }
 
-  // 4 schools per sub-county. ~66% of sub-counties get a cluster (so a third stay
-  // cluster-less for the create-cluster flow); clustered sub-counties leave 1 of 4
-  // schools unclustered for the assign-to-existing flow.
-  let gi = 0, created = 0, coreCount = 0, ssaCount = 0, clustered = 0, activityCount = 0, clusterCount = 0;
-  for (let sci = 0; sci < subCounties.length; sci++) {
-    const sc = subCounties[sci];
-    const hasCluster = sci % 3 !== 0; // ~66%
-    let clusterId: string | undefined;
-    if (hasCluster) {
-      // Idempotent: one active cluster per sub-county.
-      const existing = await prisma.cluster.findFirst({ where: { subCountyId: sc.id, deletedAt: null } });
-      const cl = existing ?? await prisma.cluster.create({ data: { name: `${sc.name} Cluster`, regionId: sc.regionId, districtId: sc.districtId, subCountyId: sc.id, subCountyName: sc.name, clusterType: ClusterType.mixed, status: ClusterRecordStatus.active } });
-      clusterId = cl.id;
-      if (!existing) clusterCount++;
+  // ── Clusters: one per sub-county, leaving ~25% cluster-less ────────
+  const clusterBySc = new Map<string, string>();
+  for (let i = 0; i < subCounties.length; i++) {
+    if (i % 4 === 0) continue;
+    const sc = subCounties[i];
+    const cl = await prisma.cluster.create({ data: { name: `${sc.name} Cluster`, regionId: sc.regionId, districtId: sc.districtId, subCountyId: sc.id, subCountyName: sc.name, clusterType: ClusterType.mixed, status: ClusterRecordStatus.active } });
+    clusterBySc.set(sc.id, cl.id);
+  }
+
+  // ── 900 schools (600 client + 300 core), round-robined across geography ──
+  type Owner = { id: string; name: string };
+  type Row = { schoolId: string; name: string; regionId: string; districtId: string; subCountyId: string; schoolType: SchoolType; enrollment: number; accountOwnerId: string; accountOwnerNameRaw: string; accountOwnerStatus: 'matched'; clusterId: string | null; clusterStatus: 'clustered' | 'unclustered'; currentFySsaStatus: 'done' | 'not_done'; planningReadiness: 'ready' | 'limited' | 'locked'; schoolPhone: string; createdByIa: boolean };
+  const rows: Row[] = [];
+  for (let gi = 0; gi < TOTAL_SCHOOLS; gi++) {
+    const isCore = gi % 3 === 0; // exactly 1/3 → 300 core, 600 client
+    const sc = subCounties[gi % subCounties.length];
+    const clusterId = clusterBySc.get(sc.id);
+    const isClustered = !!clusterId && gi % 4 !== 0;
+    // First PL_OWN×NUM_PLS schools go to PLs (their small field portfolio); the
+    // rest to CCEOs round-robin (so CCEOs carry far more than PLs).
+    const owner: Owner = gi < NUM_PLS * PL_OWN_SCHOOLS
+      ? { id: pls[gi % NUM_PLS].id, name: pls[gi % NUM_PLS].name }
+      : { id: cceos[gi % cceos.length].id, name: cceos[gi % cceos.length].name };
+    const enrollment = 120 + Math.floor(rnd() * 680);
+    const hasSsa = isCore || gi % 10 < 6; // core always; ~60% of client
+    rows.push({
+      schoolId: String(50000 + gi),
+      name: `${pick(NAME_A)} ${pick(NAME_B)}`,
+      regionId: sc.regionId, districtId: sc.districtId, subCountyId: sc.id,
+      schoolType: isCore ? SchoolType.core : SchoolType.client,
+      enrollment,
+      accountOwnerId: owner.id, accountOwnerNameRaw: owner.name, accountOwnerStatus: 'matched',
+      clusterId: isClustered ? clusterId! : null,
+      clusterStatus: isClustered ? 'clustered' : 'unclustered',
+      currentFySsaStatus: hasSsa ? 'done' : 'not_done',
+      planningReadiness: isClustered && hasSsa ? 'ready' : isClustered ? 'limited' : 'locked',
+      schoolPhone: `+25670${String(2000000 + gi).slice(-7)}`,
+      createdByIa: true,
+    });
+  }
+  for (const c of chunk(rows, 500)) await prisma.school.createMany({ data: c, skipDuplicates: true });
+  const dbSchools = await prisma.school.findMany({ select: { id: true, schoolId: true } });
+  const idByExt = new Map(dbSchools.map((s) => [s.schoolId, s.id]));
+
+  // Assignments + cluster memberships + enrollment history (bulk).
+  await Promise.all(chunk(rows.map((r) => ({ staffId: r.accountOwnerId, schoolId: idByExt.get(r.schoolId)! })), 500).map((c) => prisma.staffSchoolAssignment.createMany({ data: c, skipDuplicates: true })));
+  await Promise.all(chunk(rows.filter((r) => r.clusterId).map((r) => ({ schoolId: idByExt.get(r.schoolId)!, clusterId: r.clusterId!, assignedBy: 'seed' })), 500).map((c) => prisma.schoolClusterAssignment.createMany({ data: c, skipDuplicates: true })));
+  await Promise.all(chunk(rows.filter((r) => r.currentFySsaStatus === 'done').map((r) => ({ schoolId: idByExt.get(r.schoolId)!, fy: '2026', enrollment: r.enrollment })), 500).map((c) => prisma.schoolEnrollmentHistory.createMany({ data: c, skipDuplicates: true })));
+
+  // ── SSA: TWO rounds for core (baseline 2025 → follow-up 2026) so improvement
+  //    is real; one round for client-with-SSA. Nested scores → individual creates. ──
+  const ssaJobs: (() => Promise<unknown>)[] = [];
+  let ssaCount = 0;
+  for (const r of rows) {
+    if (r.currentFySsaStatus !== 'done') continue;
+    const id = idByExt.get(r.schoolId)!;
+    const isCore = r.schoolType === 'core';
+    const baseline = ssaScores(isCore).map((s) => ({ intervention: s.intervention, score: Math.max(1, Math.round((s.score - 1.2) * 10) / 10) }));
+    ssaJobs.push(() => prisma.ssaRecord.create({ data: { schoolId: id, dateOfSsa: new Date(Date.UTC(2025, 9, 1 + (Number(r.schoolId) % 80))), fy: '2025', quarter: 'Q1', newEnrollment: r.enrollment, averageScore: avg(baseline), uploadedBy: 'seed', verificationStatus: 'confirmed', scores: { create: baseline } } }));
+    ssaCount++;
+    if (isCore) {
+      const improved = rnd() < 0.7; // 70% of core schools improve round-over-round
+      const follow = baseline.map((s) => ({ intervention: s.intervention, score: Math.min(10, Math.max(1, Math.round((s.score + (improved ? 0.6 + rnd() * 1.2 : -(0.3 + rnd() * 0.6))) * 10) / 10)) }));
+      ssaJobs.push(() => prisma.ssaRecord.create({ data: { schoolId: id, dateOfSsa: new Date(Date.UTC(2026, 1, 1 + (Number(r.schoolId) % 80))), fy: '2026', quarter: 'Q2', newEnrollment: r.enrollment, averageScore: avg(follow), uploadedBy: 'seed', verificationStatus: 'confirmed', scores: { create: follow } } }));
+      ssaCount++;
     }
+  }
+  for (const c of chunk(ssaJobs, 40)) await Promise.all(c.map((fn) => fn()));
 
-    for (let s = 0; s < 4; s++, gi++) {
-      const type: SchoolType = gi % 5 === 0 ? SchoolType.core : gi % 5 === 1 ? SchoolType.potential_core : SchoolType.client;
-      const isCore = type === 'core';
-      // Cluster: if sub-county has a cluster, clustered unless it's the last of 4.
-      const isClustered = hasCluster && s < 3;
-      // SSA: core always; SIT-done-but-SSA-missing for some; otherwise ~70%.
-      const sitOnly = !isCore && gi % 9 === 0;
-      const hasSsa = isCore || (!sitOnly && gi % 10 < 7);
-      const schoolId = String(50000 + gi);
-      if (await prisma.school.findUnique({ where: { schoolId } })) continue;
-      const owner = cceos[gi % cceos.length];
-
-      const school = await prisma.school.create({
-        data: {
-          schoolId, name: `${pick(NAME_A)} ${pick(NAME_B)}`,
-          regionId: sc.regionId, districtId: sc.districtId, subCountyId: sc.id,
-          schoolType: type, enrollment: 120 + Math.floor(rnd() * 600),
-          accountOwnerId: owner.id, accountOwnerNameRaw: cceoNames[gi % cceoNames.length], accountOwnerStatus: 'matched',
-          clusterId: isClustered ? clusterId : null,
-          clusterStatus: isClustered ? 'clustered' : 'unclustered',
-          currentFySsaStatus: hasSsa ? 'done' : (sitOnly ? 'scheduled' : 'not_done'),
-          planningReadiness: isClustered && hasSsa ? 'ready' : isClustered ? 'limited' : 'locked',
-          schoolPhone: `+25670${String(2000000 + gi).slice(-7)}`,
-          createdByIa: true,
-        },
-      });
-      await prisma.staffSchoolAssignment.upsert({ where: { staffId_schoolId: { staffId: owner.id, schoolId: school.id } }, update: {}, create: { staffId: owner.id, schoolId: school.id } });
-      if (isClustered && clusterId) await prisma.schoolClusterAssignment.upsert({ where: { schoolId_clusterId: { schoolId: school.id, clusterId } }, update: {}, create: { schoolId: school.id, clusterId, assignedBy: 'mock_seed' } });
-      created++;
-      if (isCore) coreCount++;
-      if (isClustered) clustered++;
-
-      if (hasSsa) {
-        const scores = ssaScores(isCore);
-        await prisma.ssaRecord.create({ data: { schoolId: school.id, dateOfSsa: new Date(Date.UTC(2026, 0, 1 + (gi % 90))), fy: '2026', quarter: 'Q2', newEnrollment: school.enrollment, averageScore: avg(scores), uploadedBy: 'mock_seed', verificationStatus: isCore ? 'confirmed' : 'pending', scores: { create: scores } } });
-        await prisma.schoolEnrollmentHistory.upsert({ where: { schoolId_fy: { schoolId: school.id, fy: '2026' } }, update: {}, create: { schoolId: school.id, fy: '2026', enrollment: school.enrollment! } });
-        ssaCount++;
-      }
-
-      // Core schools get a 4-visit + 4-training package with mixed partner status.
-      if (isCore) {
-        const partnerDelivered = gi % 2 === 0;
-        for (const at of ['core_visit', 'core_training'] as ActivityType[]) {
-          for (let n = 1; n <= 4; n++) {
-            const done = n <= (1 + Math.floor(rnd() * 4));
-            await prisma.activity.create({ data: {
-              activityType: at, schoolId: school.id, fy: '2026', quarter: 'Q2', responsibleStaffId: owner.id,
-              deliveryType: partnerDelivered ? 'partner' : 'staff',
-              status: done ? ActivityStatus.completed : (partnerDelivered ? ActivityStatus.assigned_to_partner : ActivityStatus.not_planned),
-              purposeIntervention: INTERVENTIONS[(n - 1) % INTERVENTIONS.length],
-              salesforceActivityId: done ? (at === 'core_visit' ? `SV-${schoolId}${n}` : `TS-${schoolId}${n}`) : null,
-              salesforceActivityType: at === 'core_visit' ? 'visit' : 'training',
-              iaVerificationStatus: done ? 'confirmed' : 'pending', iaConfirmedAt: done ? new Date() : null,
-              evidenceStatus: done ? 'accepted' : (partnerDelivered ? 'uploaded' : 'none'),
-            } });
-            activityCount++;
-          }
+  // ── Activities: core = 4 visits + 4 trainings (trainings carry attendance);
+  //    ~1/3 of client schools get a completed visit + training. ──
+  const acts: Prisma.ActivityCreateManyInput[] = [];
+  for (const r of rows) {
+    const id = idByExt.get(r.schoolId)!;
+    const n0 = Number(r.schoolId);
+    if (r.schoolType === 'core') {
+      const partnerDelivered = n0 % 2 === 0;
+      for (const at of ['core_visit', 'core_training'] as ActivityType[]) {
+        const isTraining = at === 'core_training';
+        for (let n = 1; n <= 4; n++) {
+          const done = n <= 2 + Math.floor(rnd() * 3); // 2..4 of 4 complete
+          acts.push({
+            activityType: at, schoolId: id, fy: '2026', quarter: 'Q2', responsibleStaffId: r.accountOwnerId,
+            deliveryType: partnerDelivered ? 'partner' : 'staff',
+            status: done ? ActivityStatus.completed : (partnerDelivered ? ActivityStatus.assigned_to_partner : ActivityStatus.planned),
+            purposeIntervention: INTERVENTIONS[(n - 1) % INTERVENTIONS.length],
+            teachersAttended: isTraining && done ? 8 + Math.floor(rnd() * 22) : null,
+            leadersAttended: isTraining && done ? 2 + Math.floor(rnd() * 5) : null,
+            salesforceActivityId: done ? `${isTraining ? 'TS' : 'SV'}-${r.schoolId}${n}` : null,
+            salesforceActivityType: isTraining ? 'training' : 'visit',
+            iaVerificationStatus: done ? 'confirmed' : 'pending', iaConfirmedAt: done ? new Date() : null,
+            evidenceStatus: done ? 'accepted' : (partnerDelivered ? 'uploaded' : 'none'),
+            paymentStatus: done ? PaymentStatus.paid : PaymentStatus.none,
+          });
         }
       }
+    } else if (r.currentFySsaStatus === 'done' && n0 % 3 === 0) {
+      acts.push({ activityType: 'school_visit', schoolId: id, fy: '2026', quarter: 'Q2', responsibleStaffId: r.accountOwnerId, deliveryType: 'staff', status: ActivityStatus.completed, iaVerificationStatus: 'confirmed', iaConfirmedAt: new Date(), evidenceStatus: 'accepted', salesforceActivityId: `SV-${r.schoolId}1`, salesforceActivityType: 'visit', paymentStatus: PaymentStatus.paid });
+      acts.push({ activityType: 'school_improvement_training', schoolId: id, fy: '2026', quarter: 'Q2', responsibleStaffId: r.accountOwnerId, deliveryType: 'staff', status: ActivityStatus.completed, iaVerificationStatus: 'confirmed', iaConfirmedAt: new Date(), evidenceStatus: 'accepted', teachersAttended: 6 + Math.floor(rnd() * 16), leadersAttended: 2 + Math.floor(rnd() * 3), salesforceActivityId: `TS-${r.schoolId}1`, salesforceActivityType: 'training', paymentStatus: PaymentStatus.paid });
     }
   }
+  for (const c of chunk(acts, 500)) await prisma.activity.createMany({ data: c, skipDuplicates: true });
 
-  console.log(`✓ mock: ${subCounties.length} sub-counties, ${clusterCount} clusters`);
-  console.log(`✓ mock: ${created} schools (${coreCount} core, ${clustered} clustered, ${created - clustered} unclustered), ${ssaCount} SSA, ${activityCount} core activities`);
-  console.log(`✓ mock: ${cceos.length} CCEOs, ${pls.length} PLs; all passwords "edify"`);
+  const core = rows.filter((r) => r.schoolType === 'core').length;
+  const clustered = rows.filter((r) => r.clusterStatus === 'clustered').length;
+  console.log(`✓ ${subCounties.length} sub-counties, ${clusterBySc.size} clusters`);
+  console.log(`✓ ${rows.length} schools (${core} core, ${rows.length - core} client; ${clustered} clustered), ${ssaCount} SSA records, ${acts.length} activities`);
+  console.log(`✓ ${cceos.length} CCEOs, ${pls.length} PLs (each owns ${PL_OWN_SCHOOLS} + supervises ${CCEOS_PER_PL} CCEOs); passwords "edify"`);
 }
 
 // Workflow-connected messages + notifications, addressed to real users with
@@ -347,10 +394,53 @@ async function seedDomains() {
   console.log(`✓ mock: ${partners} partners, ${projects} projects, ${evidence} evidence, ${payments} payments, ${plans} annual plans, ${costs} cost settings`);
 }
 
+// Purge all operational data so a reseed is a clean rebuild (not a pile-up).
+// Keeps reference + auth: User, Permission, RolePermission, Region, District,
+// SubCounty. Deletes children → parents to satisfy FKs.
+async function purgeOperational() {
+  await prisma.paymentDisbursement.deleteMany();
+  await prisma.paymentActionLog.deleteMany();
+  await prisma.paymentRequest.deleteMany();
+  await prisma.activityCompletionVerification.deleteMany();
+  await prisma.evidenceRecord.deleteMany();
+  await prisma.activityBudgetLine.deleteMany();
+  await prisma.annualPlanActivity.deleteMany();
+  await prisma.budgetApproval.deleteMany();
+  await prisma.budgetVersion.deleteMany();
+  await prisma.monthlyFundRequest.deleteMany();
+  await prisma.annualPlan.deleteMany();
+  await prisma.projectImpactSnapshot.deleteMany();
+  await prisma.projectPartnerAssignment.deleteMany();
+  await prisma.projectSchoolAssignment.deleteMany();
+  await prisma.activity.deleteMany();
+  await prisma.project.deleteMany();
+  await prisma.ssaScore.deleteMany();
+  await prisma.ssaRecord.deleteMany();
+  await prisma.schoolEnrollmentHistory.deleteMany();
+  await prisma.schoolClusterAssignment.deleteMany();
+  await prisma.schoolDuplicateCandidate.deleteMany();
+  await prisma.schoolAccountOwnerUploadMap.deleteMany();
+  await prisma.message.deleteMany();
+  await prisma.messageThread.deleteMany();
+  await prisma.notification.deleteMany();
+  await prisma.staffSchoolAssignment.deleteMany();
+  await prisma.staffSupervisorAssignment.deleteMany();
+  await prisma.staffGeographyAssignment.deleteMany();
+  await prisma.staffTargetProfile.deleteMany();
+  await prisma.school.deleteMany();
+  await prisma.cluster.deleteMany();
+  await prisma.staffProfile.deleteMany();
+  await prisma.costSetting.deleteMany();
+  await prisma.uploadBatch.deleteMany();
+  await prisma.partner.deleteMany();
+  console.log('✓ purged operational data (kept users + geography reference)');
+}
+
 async function main() {
   await seedReference();
   if (IS_PROD) { console.log('• production: skipping mock data'); return; }
   if (!MOCK) { console.log('• ENABLE_MOCK_DATA=false: skipping mock data'); return; }
+  await purgeOperational();
   await seedMock();
   await seedDomains();
   await seedMessagesAndNotifications();
