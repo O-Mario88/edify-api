@@ -19,6 +19,7 @@ import { SearchModule } from './modules/search/search.module';
 import { MessagesModule } from './modules/messages/messages.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { DebriefsModule } from './modules/debriefs/debriefs.module';
+import { SpecialProjectsModule } from './modules/special-projects/special-projects.module';
 import { SystemHealthModule } from './modules/system-health/system-health.module';
 import { HealthController } from './health.controller';
 
@@ -43,6 +44,7 @@ import { HealthController } from './health.controller';
     MessagesModule,
     NotificationsModule,
     DebriefsModule,
+    SpecialProjectsModule,
     SystemHealthModule,
     // Roadmap modules (scaffolded next): users/staff, planning, evidence,
     // salesforce-verification, payments, annual-plan-budget, special-projects,
