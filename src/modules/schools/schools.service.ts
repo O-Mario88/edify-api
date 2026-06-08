@@ -260,6 +260,78 @@ export class SchoolsService {
   }
 
   // The correct next planning action for ONE school (spec §4/§5/§10). Scoped:
+  // The full school improvement JOURNEY (spec §3 "fix the main workflow"):
+  // Directory → Owner → Cluster → SSA → Plan → Execute → Verify → Pay → Improve.
+  // Every step's status is computed from real data + a clear next action + blockers.
+  async workflow(schoolId: string, actor: AuthUser, fy?: string) {
+    const scope = await this.scope.resolveUserScope(actor);
+    const school = await this.prisma.school.findFirst({
+      where: { schoolId, deletedAt: null, ...this.scope.schoolWhere(scope) },
+      select: {
+        id: true, schoolId: true, name: true, schoolType: true,
+        accountOwnerId: true, clusterId: true, clusterStatus: true, currentFySsaStatus: true,
+        accountOwner: { include: { user: { select: { name: true } } } },
+        ssaRecords: { where: { deletedAt: null }, orderBy: { dateOfSsa: 'asc' }, select: { averageScore: true } },
+      },
+    });
+    if (!school) throw new NotFoundException('School not found or outside your scope');
+
+    const acts = await this.prisma.activity.findMany({
+      where: { schoolId: school.id, deletedAt: null, status: { notIn: ['cancelled', 'rejected', 'returned'] } },
+      select: { status: true, paymentStatus: true, iaVerificationStatus: true },
+    });
+    const EXEC = ['evidence_uploaded', 'evidence_accepted', 'salesforce_id_required', 'awaiting_ia_verification', 'ia_verified', 'accountant_confirmed', 'completed'];
+    const VERIFIED = ['ia_verified', 'accountant_confirmed', 'completed'];
+    const PAID = ['paid', 'closed', 'accountant_cleared'];
+
+    const hasPlanned = acts.length > 0;
+    const hasExecuted = acts.some((a) => EXEC.includes(a.status));
+    const hasVerified = acts.some((a) => VERIFIED.includes(a.status) || a.iaVerificationStatus === 'confirmed');
+    const hasPaid = acts.some((a) => PAID.includes(a.paymentStatus));
+    const scored = school.ssaRecords.filter((r) => r.averageScore != null);
+    const hasImpact = scored.length >= 2 && (scored[scored.length - 1].averageScore ?? 0) > (scored[scored.length - 2].averageScore ?? 0);
+
+    const steps = [
+      { key: 'directory', label: 'School Directory', done: true },
+      { key: 'owner', label: 'Account Owner', done: !!school.accountOwnerId },
+      { key: 'cluster', label: 'Cluster', done: !!school.clusterId },
+      { key: 'ssa', label: 'Current-FY SSA', done: school.currentFySsaStatus === 'done' },
+      { key: 'planning', label: 'Planned', done: hasPlanned },
+      { key: 'execution', label: 'Executed', done: hasExecuted },
+      { key: 'verification', label: 'IA Verified', done: hasVerified },
+      { key: 'payment', label: 'Paid / Accountability', done: hasPaid },
+      { key: 'impact', label: 'Impact (SSA improved)', done: hasImpact },
+    ];
+    const currentIdx = steps.findIndex((s) => !s.done);
+    const stage = currentIdx === -1 ? 'improved' : steps[currentIdx].key;
+    const withStatus = steps.map((s, i) => ({ ...s, status: s.done ? 'done' : i === currentIdx ? 'current' : 'pending' }));
+
+    const NEXT: Record<string, { type: string; label: string; reason: string }> = {
+      owner: { type: 'ASSIGN_OWNER', label: 'Assign account owner', reason: 'This school has no account owner yet.' },
+      cluster: { type: 'ADD_TO_CLUSTER', label: 'Add to cluster', reason: 'A cluster is required before planning.' },
+      ssa: { type: 'SCHEDULE_SSA', label: 'Schedule / upload current-FY SSA', reason: 'Planning is SSA-led — capture the current-FY SSA first.' },
+      planning: { type: 'PLAN_ACTION', label: 'Plan recommended support', reason: 'SSA is in — plan the recommended visit/training.' },
+      execution: { type: 'EXECUTE', label: 'Execute + upload evidence', reason: 'Activity planned — deliver it and upload evidence.' },
+      verification: { type: 'VERIFY', label: 'Enter Salesforce ID → IA verify', reason: 'Evidence in — enter the SV-/TS- id for IA confirmation.' },
+      payment: { type: 'CLEAR_PAYMENT', label: 'Clear payment / accountability', reason: 'IA-verified — ready for accountant clearance.' },
+      impact: { type: 'MEASURE_IMPACT', label: 'Schedule follow-up SSA', reason: 'Package delivered — measure improvement with a follow-up SSA.' },
+    };
+    const blockers: string[] = [];
+    if (!school.accountOwnerId) blockers.push('No account owner');
+    if (!school.clusterId) blockers.push('Not clustered');
+    if (school.currentFySsaStatus !== 'done') blockers.push('No current-FY SSA');
+    if (stage === 'impact' && scored.length < 2) blockers.push('No previous-FY SSA — impact cannot be measured yet');
+
+    return {
+      school: { schoolId: school.schoolId, name: school.name, schoolType: school.schoolType, owner: school.accountOwner?.user?.name ?? null },
+      fy: fy ?? null,
+      stage,
+      steps: withStatus,
+      nextAction: currentIdx === -1 ? null : NEXT[steps[currentIdx].key] ?? null,
+      blockers,
+    };
+  }
+
   // 404 if the school is missing or outside the caller's scope. Gate order is
   // fixed — cluster → current-FY SSA → recommended/core planning.
   async nextActions(schoolId: string, actor: AuthUser, fy?: string) {

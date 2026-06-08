@@ -54,6 +54,13 @@ export class SchoolsController {
     return this.schools.nextActions(schoolId, user, fy);
   }
 
+  // The full school improvement journey — the main workflow (spec §3).
+  @Get(':schoolId/workflow')
+  @RequirePermissions(PERMISSIONS.SCHOOL_VIEW)
+  workflow(@Param('schoolId') schoolId: string, @Query('fy') fy: string | undefined, @CurrentUser() user: AuthUser) {
+    return this.schools.workflow(schoolId, user, fy);
+  }
+
   @Post()
   @RequirePermissions(PERMISSIONS.SCHOOL_UPLOAD)
   create(@Body() dto: CreateSchoolDto, @CurrentUser() user: AuthUser) {
