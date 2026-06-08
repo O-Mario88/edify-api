@@ -2,8 +2,10 @@ import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AnalyticsService } from './analytics.service';
 import { ContributionService } from './contribution.service';
+import { CorrelationService } from './correlation.service';
 import { ContributionQueryDto, ContributionDrilldownDto } from './dto/contribution-query.dto';
 import { SsaPerformanceQueryDto, SsaDrilldownQueryDto, InterventionImprovementQueryDto } from './dto/ssa-performance-query.dto';
+import { CorrelationQueryDto } from './dto/correlation-query.dto';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/rbac/permissions.guard';
 import { RequirePermissions } from '../../common/rbac/require-permissions.decorator';
@@ -20,6 +22,7 @@ export class AnalyticsController {
   constructor(
     private readonly analytics: AnalyticsService,
     private readonly contribution: ContributionService,
+    private readonly correlation: CorrelationService,
   ) {}
 
   @Get('dashboard') dashboard(@CurrentUser() u: AuthUser) { return this.analytics.dashboardSummary(u); }
@@ -42,6 +45,23 @@ export class AnalyticsController {
   @Get('intervention-improvement')
   interventionImprovement(@Query() q: InterventionImprovementQueryDto, @CurrentUser() u: AuthUser) {
     return this.analytics.interventionImprovement(u, q);
+  }
+
+  // Layer 3 — Support-to-Improvement. Only verified support BEFORE the SSA
+  // date counts (timing rule). Associations, never causal claims.
+  @Get('support-before-ssa')
+  supportBeforeSsa(@Query() q: CorrelationQueryDto, @CurrentUser() u: AuthUser) {
+    return this.correlation.supportBeforeSsa(u, q);
+  }
+
+  @Get('support-ssa-correlation')
+  supportCorrelation(@Query() q: CorrelationQueryDto, @CurrentUser() u: AuthUser) {
+    return this.correlation.supportSsaCorrelation(u, q);
+  }
+
+  @Get('staff-vs-partner-correlation')
+  staffVsPartner(@Query() q: CorrelationQueryDto, @CurrentUser() u: AuthUser) {
+    return this.correlation.staffVsPartner(u, q);
   }
   @Get('activity-pipeline') pipeline(@CurrentUser() u: AuthUser) { return this.analytics.activityPipeline(u); }
 
