@@ -900,6 +900,12 @@ model Partner {
   regionName String?
   trainsOn  String[]
   notes     String?
+  // Certification (item 14): correlation separates certified vs non-certified
+  // partner support, driving the staff-vs-certified-partner contribution view.
+  isCertified         Boolean  @default(false)
+  certificationStatus String?  // certified | pending | expired | none
+  expertiseAreas      String[]
+  activeStatus        Boolean  @default(true)
   activities Activity[]
   projectAssignments ProjectPartnerAssignment[]
   createdAt DateTime @default(now())
@@ -971,4 +977,136 @@ model AuditLog {
   @@index([subjectKind, subjectId])
   @@index([actorId])
   @@index([createdAt])
+}
+
+// ── Target framework ────────────────────────────────────────────────
+// CD/IA set annual commitments across every category; the engine resolves
+// a 100% default when no explicit setting exists. Targets prove EXECUTION
+// (did we do the planned work, on time, verified?), distinct from SSA impact.
+enum TargetType {
+  SCHOOL_REACH
+  STAFF_DIRECT_SUPPORT
+  PARTNER_SUPPORT
+  TRAINING
+  SSA
+  SCHOOL_VISIT
+  MSCS
+  EXAM_RESULTS
+  CORE_PACKAGE
+  PROJECT_SUPPORT
+  IA_VERIFICATION
+  ACCOUNTABILITY
+}
+
+enum TargetScopeType {
+  country
+  region
+  district
+  cluster
+  staff
+  pl_team
+  partner
+  project
+  school_type
+}
+
+enum TargetUnit {
+  count
+  percentage
+}
+
+model TargetSetting {
+  id               String          @id @default(cuid())
+  fy               String
+  targetType       TargetType
+  scopeType        TargetScopeType
+  scopeId          String?
+  targetValue      Float?
+  targetUnit       TargetUnit      @default(percentage)
+  targetPercentage Float?
+  // Optional custom cumulative distribution e.g. {"Q1":0.2,"Q2":0.5,"Q3":0.75,"Q4":1}
+  quarterDistribution Json?
+  setByUserId      String
+  setByRole        EdifyRole
+  effectiveFrom    DateTime        @default(now())
+  effectiveTo      DateTime?
+  notes            String?
+  isActive         Boolean         @default(true)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@index([fy, targetType])
+  @@index([scopeType, scopeId])
+  @@index([isActive])
+}
+
+// ── Most Significant Change Stories ─────────────────────────────────
+enum MscsReviewStatus {
+  draft
+  submitted
+  reviewed
+  approved
+  returned
+  rejected
+  donor_ready
+}
+
+model MostSignificantChangeStory {
+  id                    String           @id @default(cuid())
+  fy                    String
+  quarter               String?
+  schoolId              String?
+  clusterId             String?
+  districtId            String?
+  regionId              String?
+  submittedByStaffId    String?
+  submittedByRole       EdifyRole?
+  relatedInterventionId String?
+  relatedProjectId      String?
+  storyTitle            String
+  storySummary          String?
+  storyText             String?
+  evidenceAttachmentId  String?
+  consentStatus         String?
+  reviewStatus          MscsReviewStatus @default(draft)
+  reviewedBy            String?
+  approvedBy            String?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  deletedAt             DateTime?
+
+  @@index([fy, quarter])
+  @@index([schoolId])
+  @@index([reviewStatus])
+}
+
+// ── Exam Results collection ─────────────────────────────────────────
+enum ExamCollectionStatus {
+  missing
+  collected
+  validated
+  returned
+  approved
+}
+
+model ExamResultCollection {
+  id                 String               @id @default(cuid())
+  schoolId           String
+  fy                 String
+  examType           String?
+  examYear           Int?
+  collectionDate     DateTime?
+  collectedByStaffId String?
+  uploadedByIA       String?
+  status             ExamCollectionStatus @default(missing)
+  attachmentId       String?
+  resultsSummaryJson Json?
+  notes              String?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  deletedAt          DateTime?
+
+  @@index([fy])
+  @@index([schoolId])
+  @@index([status])
 }
