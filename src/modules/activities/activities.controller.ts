@@ -64,4 +64,17 @@ export class ActivitiesController {
   defer(@Param('id') id: string, @Body() dto: ReasonDto, @CurrentUser() user: AuthUser) {
     return this.activities.defer(id, dto, user);
   }
+
+  // Accountant: partner payment pipeline.
+  @Get('payment-queue')
+  @RequirePermissions(PERMISSIONS.PAYMENT_ACT)
+  paymentQueue(@CurrentUser() user: AuthUser) {
+    return this.activities.paymentQueue(user);
+  }
+
+  @Post(':id/clear-payment')
+  @RequirePermissions(PERMISSIONS.PAYMENT_ACT)
+  clearPayment(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.activities.clearPayment(id, user);
+  }
 }

@@ -198,4 +198,44 @@ export class ActivitiesService {
     await this.audit.log({ action: 'activity.defer', subjectKind: 'Activity', subjectId: id, actorId: user.userId, actorRole: user.activeRole, payload: { reason: dto.reason } });
     return updated;
   }
+
+  // ── Partner-to-payment (accountant) ───────────────────────────────
+  // The accountant's queue: partner-delivered activities in the payment pipeline.
+  async paymentQueue(user: AuthUser) {
+    const schoolIds = await this.scopedSchoolIds(user);
+    const where: Prisma.ActivityWhereInput = {
+      deletedAt: null, deliveryType: 'partner',
+      paymentStatus: { in: ['ia_confirmed', 'pl_approved', 'accountant_cleared'] },
+    };
+    if (schoolIds) where.schoolId = { in: schoolIds.length ? schoolIds : ['__none__'] };
+    const acts = await this.prisma.activity.findMany({
+      where, take: 200, orderBy: { updatedAt: 'desc' },
+      select: {
+        id: true, activityType: true, salesforceActivityId: true, evidenceStatus: true,
+        iaVerificationStatus: true, paymentStatus: true,
+        school: { select: { schoolId: true, name: true } }, assignedPartner: { select: { name: true } },
+      },
+    });
+    return acts.map((a) => ({
+      ...a,
+      ready: a.evidenceStatus === 'accepted' && !!a.salesforceActivityId && a.iaVerificationStatus === 'confirmed' && a.paymentStatus !== 'paid',
+    }));
+  }
+
+  // Clear a partner payment. BLOCKED until evidence accepted + Salesforce ID +
+  // IA confirmed (spec §10 — payment never bypasses verification).
+  async clearPayment(id: string, user: AuthUser) {
+    const a = await this.prisma.activity.findUnique({ where: { id } });
+    if (!a) throw new NotFoundException('Activity not found');
+    await this.assertInScope(a, user);
+    if (a.deliveryType !== 'partner') throw new BadRequestException('Payment clearance is for partner-delivered activities.');
+    if (a.iaVerificationStatus !== 'confirmed') throw new ForbiddenException('Cannot clear payment — activity is not IA-verified.');
+    if (!a.salesforceActivityId) throw new ForbiddenException('Cannot clear payment — no Salesforce ID entered.');
+    if (a.evidenceStatus !== 'accepted') throw new ForbiddenException('Cannot clear payment — evidence not accepted.');
+    if (a.paymentStatus === 'paid' || a.paymentStatus === 'closed') throw new BadRequestException('Payment already cleared.');
+
+    const updated = await this.prisma.activity.update({ where: { id }, data: { paymentStatus: 'paid' } });
+    await this.audit.log({ action: 'payment.cleared', subjectKind: 'Activity', subjectId: id, actorId: user.userId, actorRole: user.activeRole, payload: { partner: a.assignedPartnerId, salesforceId: a.salesforceActivityId } });
+    return updated;
+  }
 }
