@@ -18,3 +18,13 @@ export class SsaDrilldownQueryDto {
   @IsOptional() @IsString() fy?: string;
   @IsOptional() @IsIn(['all', 'client', 'core', 'potential_core']) schoolType?: string;
 }
+
+export class InterventionImprovementQueryDto {
+  @IsOptional() @IsIn(GROUPS) groupBy?: SsaGroupBy;
+  @IsOptional() @IsIn(['all', 'client', 'core', 'potential_core']) schoolType?: string;
+  @IsOptional() @IsString() currentFy?: string;
+  @IsOptional() @IsString() prevFy?: string;
+  @IsOptional() @IsString() regionId?: string;
+  @IsOptional() @IsString() districtId?: string;
+  @IsOptional() @IsString() clusterId?: string;
+}

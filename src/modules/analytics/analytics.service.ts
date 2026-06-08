@@ -196,6 +196,116 @@ export class AnalyticsService {
     };
   }
 
+  // ── Intervention Improvement (previous FY vs current FY per intervention) ──
+  // Impact ≠ performance. Only schools with BOTH a previous-FY and current-FY SSA
+  // count; the rest are surfaced as "no comparison", never faked.
+  async interventionImprovement(user: AuthUser, params: {
+    groupBy?: SsaGroupBy; schoolType?: string; currentFy?: string; prevFy?: string;
+    regionId?: string; districtId?: string; clusterId?: string;
+  }) {
+    const scope = await this.scope.resolveUserScope(user);
+    const groupBy: SsaGroupBy = params.groupBy ?? 'district';
+    const currentFy = params.currentFy ?? getOperationalFY();
+    const prevFy = params.prevFy ?? String(Number(currentFy) - 1);
+
+    const where: Prisma.SchoolWhereInput = { deletedAt: null, ...this.scope.aggregateSchoolWhere(scope) };
+    if (params.schoolType && params.schoolType !== 'all') where.schoolType = params.schoolType as Prisma.SchoolWhereInput['schoolType'];
+    if (params.regionId) where.regionId = params.regionId;
+    if (params.districtId) where.districtId = params.districtId;
+    if (params.clusterId) where.clusterId = params.clusterId;
+
+    const schools = await this.prisma.school.findMany({
+      where,
+      select: {
+        id: true, regionId: true, districtId: true, subCountyId: true, clusterId: true, accountOwnerId: true,
+        region: { select: { name: true } }, district: { select: { name: true } }, cluster: { select: { name: true } },
+        subCounty: { select: { name: true } }, accountOwner: { include: { user: { select: { name: true } } } },
+        ssaRecords: { where: { deletedAt: null, fy: { in: [prevFy, currentFy] } }, orderBy: { dateOfSsa: 'desc' }, include: { scores: true } },
+      },
+    });
+
+    const keyOf = (s: (typeof schools)[number]): string => {
+      switch (groupBy) {
+        case 'region': return s.regionId;
+        case 'subCounty': return s.subCountyId ?? '__none__';
+        case 'cluster': return s.clusterId ?? '__unclustered__';
+        case 'cceo': return s.accountOwnerId ?? '__unassigned__';
+        default: return s.districtId;
+      }
+    };
+    const nameOf = (s: (typeof schools)[number]): string => {
+      switch (groupBy) {
+        case 'region': return s.region?.name ?? 'Region';
+        case 'subCounty': return s.subCounty?.name ?? 'Unassigned sub-county';
+        case 'cluster': return s.cluster?.name ?? 'Unclustered';
+        case 'cceo': return s.accountOwner?.user?.name ?? 'Unassigned';
+        default: return s.district?.name ?? 'District';
+      }
+    };
+
+    type IAcc = { prevSum: number; prevN: number; currSum: number; currN: number; changeSum: number; changeN: number };
+    type Acc = { name: string; improved: number; declined: number; noChange: number; noComparison: number; interv: Map<SsaIntervention, IAcc> };
+    const groups = new Map<string, Acc>();
+
+    for (const s of schools) {
+      const k = keyOf(s);
+      const g = groups.get(k) ?? { name: nameOf(s), improved: 0, declined: 0, noChange: 0, noComparison: 0, interv: new Map() };
+      const prev = s.ssaRecords.find((r) => r.fy === prevFy);
+      const curr = s.ssaRecords.find((r) => r.fy === currentFy);
+      if (!prev || !curr || prev.averageScore == null || curr.averageScore == null) {
+        g.noComparison++;
+        groups.set(k, g);
+        continue;
+      }
+      const delta = curr.averageScore - prev.averageScore;
+      if (delta > 0.05) g.improved++; else if (delta < -0.05) g.declined++; else g.noChange++;
+      const pMap = new Map(prev.scores.map((sc) => [sc.intervention, sc.score]));
+      const cMap = new Map(curr.scores.map((sc) => [sc.intervention, sc.score]));
+      for (const m of INTERVENTION_META) {
+        const pv = pMap.get(m.key); const cv = cMap.get(m.key);
+        const acc = g.interv.get(m.key) ?? { prevSum: 0, prevN: 0, currSum: 0, currN: 0, changeSum: 0, changeN: 0 };
+        if (pv != null) { acc.prevSum += pv; acc.prevN++; }
+        if (cv != null) { acc.currSum += cv; acc.currN++; }
+        if (pv != null && cv != null) { acc.changeSum += cv - pv; acc.changeN++; }
+        g.interv.set(m.key, acc);
+      }
+      groups.set(k, g);
+    }
+
+    const r1 = (x: number) => Math.round(x * 10) / 10;
+    const rows = [...groups.entries()].map(([groupId, g]) => {
+      const interventions = INTERVENTION_META.map((m) => {
+        const a = g.interv.get(m.key);
+        return {
+          code: m.code, label: m.label,
+          prevAvg: a && a.prevN ? r1(a.prevSum / a.prevN) : null,
+          currAvg: a && a.currN ? r1(a.currSum / a.currN) : null,
+          change: a && a.changeN ? r1(a.changeSum / a.changeN) : null,
+        };
+      });
+      const withChange = interventions.filter((i) => i.change != null);
+      const best = withChange.length ? withChange.reduce((b, i) => (i.change! > b.change! ? i : b)) : null;
+      const declining = withChange.length ? withChange.reduce((d, i) => (i.change! < d.change! ? i : d)) : null;
+      const weakest = interventions.filter((i) => i.currAvg != null).reduce<{ code: string; label: string; currAvg: number | null } | null>((w, i) => (!w || (i.currAvg! < (w.currAvg ?? 99)) ? i : w), null);
+      const comparable = g.improved + g.declined + g.noChange;
+      return {
+        groupId, groupName: g.name,
+        schoolsImproved: g.improved, schoolsDeclined: g.declined, schoolsNoChange: g.noChange, schoolsNoComparison: g.noComparison,
+        improvementRate: comparable ? Math.round((g.improved / comparable) * 100) : null,
+        bestIntervention: best ? { code: best.code, label: best.label, change: best.change } : null,
+        decliningIntervention: declining && declining.change! < 0 ? { code: declining.code, label: declining.label, change: declining.change } : null,
+        weakestIntervention: weakest ? { code: weakest.code, label: weakest.label, currAvg: weakest.currAvg } : null,
+        interventions,
+      };
+    }).sort((a, b) => (b.improvementRate ?? -1) - (a.improvementRate ?? -1));
+
+    return {
+      currentFy, prevFy, groupBy, schoolType: params.schoolType ?? 'all',
+      interventions: INTERVENTION_META.map((m) => ({ code: m.code, label: m.label })),
+      rows,
+    };
+  }
+
   // Drilldown: the source schools behind a group's averages (scope-enforced).
   async ssaPerformanceDrilldown(user: AuthUser, params: { groupBy: SsaGroupBy; groupId: string; fy?: string; schoolType?: string }) {
     const scope = await this.scope.resolveUserScope(user);

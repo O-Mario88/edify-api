@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AnalyticsService } from './analytics.service';
 import { ContributionService } from './contribution.service';
 import { ContributionQueryDto, ContributionDrilldownDto } from './dto/contribution-query.dto';
-import { SsaPerformanceQueryDto, SsaDrilldownQueryDto } from './dto/ssa-performance-query.dto';
+import { SsaPerformanceQueryDto, SsaDrilldownQueryDto, InterventionImprovementQueryDto } from './dto/ssa-performance-query.dto';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/rbac/permissions.guard';
 import { RequirePermissions } from '../../common/rbac/require-permissions.decorator';
@@ -36,6 +36,12 @@ export class AnalyticsController {
   @Get('ssa-performance-grouped/drilldown')
   ssaGroupedDrilldown(@Query() q: SsaDrilldownQueryDto, @CurrentUser() u: AuthUser) {
     return this.analytics.ssaPerformanceDrilldown(u, q);
+  }
+
+  // Impact: previous-FY vs current-FY change per intervention, per group.
+  @Get('intervention-improvement')
+  interventionImprovement(@Query() q: InterventionImprovementQueryDto, @CurrentUser() u: AuthUser) {
+    return this.analytics.interventionImprovement(u, q);
   }
   @Get('activity-pipeline') pipeline(@CurrentUser() u: AuthUser) { return this.analytics.activityPipeline(u); }
 
