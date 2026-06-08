@@ -1,8 +1,25 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, SsaIntervention } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ScopeService, UserScope } from '../../common/scope/scope.service';
 import { AuthUser } from '../../common/auth/auth-user';
+import { getOperationalFY } from '../../common/fy/fy.util';
+
+// The official 8 SSA interventions (display order + code), mapped from the stored
+// SsaIntervention enum. SSA Performance is the average of EACH of these per group
+// — never one single score, never a partial set.
+const INTERVENTION_META: { key: SsaIntervention; code: string; label: string }[] = [
+  { key: 'christlike_behaviour', code: 'CHRIST_LIKE_BEHAVIOR', label: 'Christ-like Behavior' },
+  { key: 'exposure_to_word_of_god', code: 'EXPOSURE_TO_WORD_OF_GOD', label: 'Exposure to the Word of God' },
+  { key: 'leadership', code: 'LEADERSHIP_BEST_PRACTICE', label: 'Leadership Best Practice' },
+  { key: 'teaching_and_learning', code: 'TEACHING_ENVIRONMENT', label: 'Teaching Environment' },
+  { key: 'learning_environment', code: 'LEARNING_ENVIRONMENT', label: 'Learning Environment' },
+  { key: 'government_requirements', code: 'GOVERNMENT_REQUIREMENTS', label: 'Government Requirements' },
+  { key: 'financial_health', code: 'FEES_BUDGET_ACCOUNTS', label: 'Fees / Budget / Accounts' },
+  { key: 'education_technology', code: 'ENROLLMENT', label: 'Enrollment' },
+];
+
+export type SsaGroupBy = 'region' | 'district' | 'subCounty' | 'cluster' | 'cceo';
 
 // Scoped, filter-aware analytics summaries. Every count is constrained by the
 // caller's UserScope — never the whole table for a non-country role.
@@ -89,5 +106,131 @@ export class AnalyticsService {
       byStatus: byStatus.map((g) => ({ status: g.status, count: g._count })),
       byDelivery: byDelivery.map((g) => ({ deliveryType: g.deliveryType, count: g._count })),
     };
+  }
+
+  // ── SSA Performance by group (the average of EACH of the 8 interventions) ──
+  // Starts from School Directory, joins the latest SSA per school in the FY,
+  // scopes by the caller, includes Client + Core by default. Drillable.
+  async ssaPerformanceByGroup(user: AuthUser, params: {
+    fy?: string; groupBy?: SsaGroupBy; schoolType?: string;
+    regionId?: string; districtId?: string; clusterId?: string;
+  }) {
+    const scope = await this.scope.resolveUserScope(user);
+    const groupBy: SsaGroupBy = params.groupBy ?? 'district';
+    const fy = params.fy ?? getOperationalFY();
+
+    const where: Prisma.SchoolWhereInput = { deletedAt: null, ...this.scope.aggregateSchoolWhere(scope) };
+    if (params.schoolType && params.schoolType !== 'all') where.schoolType = params.schoolType as Prisma.SchoolWhereInput['schoolType'];
+    if (params.regionId) where.regionId = params.regionId;
+    if (params.districtId) where.districtId = params.districtId;
+    if (params.clusterId) where.clusterId = params.clusterId;
+
+    const schools = await this.prisma.school.findMany({
+      where,
+      select: {
+        id: true, regionId: true, districtId: true, subCountyId: true, clusterId: true, accountOwnerId: true,
+        region: { select: { name: true } }, district: { select: { name: true } }, cluster: { select: { name: true } },
+        subCounty: { select: { name: true } },
+        accountOwner: { include: { user: { select: { name: true } } } },
+        ssaRecords: { where: { deletedAt: null, fy }, orderBy: { dateOfSsa: 'desc' }, take: 1, include: { scores: true } },
+      },
+    });
+
+    const keyOf = (s: (typeof schools)[number]): string => {
+      switch (groupBy) {
+        case 'region': return s.regionId;
+        case 'subCounty': return s.subCountyId ?? '__none__';
+        case 'cluster': return s.clusterId ?? '__unclustered__';
+        case 'cceo': return s.accountOwnerId ?? '__unassigned__';
+        default: return s.districtId;
+      }
+    };
+    const nameOf = (s: (typeof schools)[number]): string => {
+      switch (groupBy) {
+        case 'region': return s.region?.name ?? 'Region';
+        case 'subCounty': return s.subCounty?.name ?? 'Unassigned sub-county';
+        case 'cluster': return s.cluster?.name ?? 'Unclustered';
+        case 'cceo': return s.accountOwner?.user?.name ?? 'Unassigned';
+        default: return s.district?.name ?? 'District';
+      }
+    };
+
+    type Acc = { name: string; schoolCount: number; assessed: number; interv: Map<SsaIntervention, { sum: number; n: number }> };
+    const groups = new Map<string, Acc>();
+    for (const s of schools) {
+      const k = keyOf(s);
+      const g = groups.get(k) ?? { name: nameOf(s), schoolCount: 0, assessed: 0, interv: new Map() };
+      g.schoolCount++;
+      const latest = s.ssaRecords[0];
+      if (latest) {
+        g.assessed++;
+        for (const sc of latest.scores) {
+          const cur = g.interv.get(sc.intervention) ?? { sum: 0, n: 0 };
+          cur.sum += sc.score; cur.n++;
+          g.interv.set(sc.intervention, cur);
+        }
+      }
+      groups.set(k, g);
+    }
+
+    const rows = [...groups.entries()].map(([groupId, g]) => {
+      const interventions: Record<string, number | null> = {};
+      let oSum = 0, oN = 0;
+      for (const m of INTERVENTION_META) {
+        const acc = g.interv.get(m.key);
+        const avg = acc && acc.n ? Math.round((acc.sum / acc.n) * 10) / 10 : null;
+        interventions[m.code] = avg;
+        if (avg != null) { oSum += avg; oN++; }
+      }
+      return {
+        groupId, groupName: g.name,
+        schoolCount: g.schoolCount, schoolsAssessed: g.assessed, schoolsMissingSSA: g.schoolCount - g.assessed,
+        interventions, overallAverage: oN ? Math.round((oSum / oN) * 10) / 10 : null,
+      };
+    }).sort((a, b) => (b.overallAverage ?? 0) - (a.overallAverage ?? 0));
+
+    return {
+      fy, groupBy, schoolType: params.schoolType ?? 'all',
+      interventions: INTERVENTION_META.map((m) => ({ code: m.code, label: m.label })),
+      rows,
+    };
+  }
+
+  // Drilldown: the source schools behind a group's averages (scope-enforced).
+  async ssaPerformanceDrilldown(user: AuthUser, params: { groupBy: SsaGroupBy; groupId: string; fy?: string; schoolType?: string }) {
+    const scope = await this.scope.resolveUserScope(user);
+    const fy = params.fy ?? getOperationalFY();
+    const where: Prisma.SchoolWhereInput = { deletedAt: null, ...this.scope.aggregateSchoolWhere(scope) };
+    if (params.schoolType && params.schoolType !== 'all') where.schoolType = params.schoolType as Prisma.SchoolWhereInput['schoolType'];
+    switch (params.groupBy) {
+      case 'region': where.regionId = params.groupId; break;
+      case 'subCounty': where.subCountyId = params.groupId; break;
+      case 'cluster': where.clusterId = params.groupId === '__unclustered__' ? null : params.groupId; break;
+      case 'cceo': where.accountOwnerId = params.groupId === '__unassigned__' ? null : params.groupId; break;
+      default: where.districtId = params.groupId;
+    }
+    const schools = await this.prisma.school.findMany({
+      where,
+      select: {
+        schoolId: true, name: true, schoolType: true,
+        district: { select: { name: true } }, cluster: { select: { name: true } },
+        accountOwner: { include: { user: { select: { name: true } } } },
+        ssaRecords: { where: { deletedAt: null, fy }, orderBy: { dateOfSsa: 'desc' }, take: 1, include: { scores: true } },
+      },
+      take: 500,
+    });
+    return schools.map((s) => {
+      const latest = s.ssaRecords[0];
+      const scoreMap = new Map(latest?.scores.map((sc) => [sc.intervention, sc.score]) ?? []);
+      const interventions: Record<string, number | null> = {};
+      for (const m of INTERVENTION_META) interventions[m.code] = scoreMap.get(m.key) ?? null;
+      return {
+        schoolId: s.schoolId, name: s.name, schoolType: s.schoolType,
+        district: s.district?.name ?? null, cluster: s.cluster?.name ?? null,
+        cceo: s.accountOwner?.user?.name ?? null,
+        ssaDate: latest?.dateOfSsa ?? null, overallAverage: latest?.averageScore ?? null,
+        interventions,
+      };
+    });
   }
 }
