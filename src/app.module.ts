@@ -10,6 +10,7 @@ import { ClustersModule } from './modules/clusters/clusters.module';
 import { SsaModule } from './modules/ssa/ssa.module';
 import { ActivitiesModule } from './modules/activities/activities.module';
 import { AssignmentModule } from './modules/assignment/assignment.module';
+import { TargetsModule } from './modules/targets/targets.module';
 import { PlanningModule } from './modules/planning/planning.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { FiltersModule } from './modules/filters/filters.module';
@@ -31,6 +32,7 @@ import { HealthController } from './health.controller';
     SsaModule,
     ActivitiesModule,
     AssignmentModule,
+    TargetsModule,
     PlanningModule,
     AnalyticsModule,
     FiltersModule,
