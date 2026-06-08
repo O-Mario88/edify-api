@@ -38,6 +38,7 @@ export class CreateActivityDto {
   @IsOptional() @IsInt() plannedWeek?: number;
   @IsOptional() @IsString() responsibleStaffId?: string;
   @IsOptional() @IsString() assignedPartnerId?: string;
+  @IsOptional() @IsString() deliveryType?: 'staff' | 'partner';
 }
 
 export class CompleteActivityDto {

@@ -155,10 +155,11 @@ export class AssignmentService {
     fy: string;
     responsibleStaffId?: string;
     assignedPartnerId?: string;
+    deliveryType?: 'staff' | 'partner';
     overrideReason?: string;
   }): Promise<void> {
     const { user, internalSchoolId, fy } = input;
-    const toPartner = !!input.assignedPartnerId;
+    const toPartner = input.deliveryType === 'partner' || !!input.assignedPartnerId;
 
     // Cluster-only (no school) — capacity is per-school, so nothing to enforce here.
     if (!internalSchoolId) return;

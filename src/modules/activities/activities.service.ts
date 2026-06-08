@@ -73,24 +73,26 @@ export class ActivitiesService {
     }
     if (!schoolId && !dto.clusterId) throw new BadRequestException('Activity must reference a school or cluster');
 
+    const isPartner = dto.deliveryType === 'partner' || !!dto.assignedPartnerId;
     // API-enforced assignment policy + staff support capacity (spec §6/§9).
     // Throws ForbiddenException (403) with a clear reason + writes an AssignmentAudit.
     await this.assignment.assertAssignmentAllowed({
       user, internalSchoolId: schoolId, fy: dto.fy,
       responsibleStaffId: dto.responsibleStaffId, assignedPartnerId: dto.assignedPartnerId,
+      deliveryType: isPartner ? 'partner' : 'staff',
     });
 
     // Default a staff-delivered activity's owner to the creator (so it shows in
     // their My Plan); a PL may assign to a supervised CCEO via responsibleStaffId.
-    const responsibleStaffId = dto.assignedPartnerId
+    const responsibleStaffId = isPartner
       ? (dto.responsibleStaffId ?? undefined)
       : (dto.responsibleStaffId ?? user.staffProfileId ?? undefined);
     const activity = await this.prisma.activity.create({
       data: {
         activityType: dto.activityType, schoolId, clusterId: dto.clusterId, fy: dto.fy, quarter: dto.quarter,
         plannedMonth: dto.plannedMonth, plannedWeek: dto.plannedWeek, responsibleStaffId,
-        assignedPartnerId: dto.assignedPartnerId, deliveryType: dto.assignedPartnerId ? 'partner' : 'staff',
-        status: dto.assignedPartnerId ? 'assigned_to_partner' : 'planned',
+        assignedPartnerId: dto.assignedPartnerId, deliveryType: isPartner ? 'partner' : 'staff',
+        status: isPartner ? 'assigned_to_partner' : 'planned',
         salesforceActivityType: sfKind(dto.activityType),
       },
     });
