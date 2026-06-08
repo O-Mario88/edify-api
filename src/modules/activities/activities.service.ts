@@ -6,6 +6,7 @@ import { ScopeService } from '../../common/scope/scope.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { paginate } from '../../common/dto/pagination.dto';
 import { isValidSalesforceId } from '../../common/salesforce/salesforce-id.util';
+import { AssignmentService } from '../assignment/assignment.service';
 import { CompleteActivityDto, CreateActivityDto, QueryActivitiesDto } from './dto/activities.dto';
 
 const TRAINING_TYPES: ActivityType[] = ['training', 'school_improvement_training', 'cluster_meeting', 'cluster_training', 'core_training', 'project_activity'];
@@ -17,6 +18,7 @@ export class ActivitiesService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly scope: ScopeService,
+    private readonly assignment: AssignmentService,
   ) {}
 
   private async scopedSchoolIds(user: AuthUser): Promise<string[] | null> {
@@ -67,6 +69,13 @@ export class ActivitiesService {
       schoolId = s.id;
     }
     if (!schoolId && !dto.clusterId) throw new BadRequestException('Activity must reference a school or cluster');
+
+    // API-enforced assignment policy + staff support capacity (spec §6/§9).
+    // Throws ForbiddenException (403) with a clear reason + writes an AssignmentAudit.
+    await this.assignment.assertAssignmentAllowed({
+      user, internalSchoolId: schoolId, fy: dto.fy,
+      responsibleStaffId: dto.responsibleStaffId, assignedPartnerId: dto.assignedPartnerId,
+    });
 
     const activity = await this.prisma.activity.create({
       data: {

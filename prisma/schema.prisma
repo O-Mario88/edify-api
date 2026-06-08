@@ -282,6 +282,7 @@ model StaffProfile {
   geographyLinks    StaffGeographyAssignment[]
   schoolLinks       StaffSchoolAssignment[]
   targetProfiles    StaffTargetProfile[]
+  supportCapacities StaffSupportCapacity[]
   ownedSchools      School[]   @relation("SchoolAccountOwner")
   responsibleActivities Activity[] @relation("ActivityResponsible")
   monitoredActivities   Activity[] @relation("ActivityMonitor")
@@ -322,6 +323,50 @@ model StaffSchoolAssignment {
   createdAt DateTime     @default(now())
 
   @@unique([staffId, schoolId])
+}
+
+// CD/IA-set limit on how many UNIQUE schools a staff member may DIRECTLY support
+// per FY. Once reached, self-assignment to a NEW school is blocked and partner
+// assignment becomes the route. Partners are NOT capped.
+model StaffSupportCapacity {
+  id                       String       @id @default(cuid())
+  staff                    StaffProfile @relation(fields: [staffId], references: [id])
+  staffId                  String
+  fy                       String       // "2026"
+  maxDirectSchoolsSupported Int
+  setByUserId              String       // CD/IA who set it
+  setByRole                EdifyRole    // CountryDirector | ImpactAssessment
+  effectiveFrom            DateTime?
+  effectiveTo              DateTime?
+  notes                    String?
+  isActive                 Boolean      @default(true)
+  createdAt                DateTime     @default(now())
+  updatedAt                DateTime     @updatedAt
+
+  @@unique([staffId, fy])
+  @@index([fy])
+}
+
+// Every assignment attempt — allowed or blocked — for accountability (spec §20).
+model AssignmentAudit {
+  id              String   @id @default(cuid())
+  action          String   // "assign.self" | "assign.partner" | "assign.staff"
+  schoolId        String?
+  activityId      String?
+  assignerId      String
+  assignerRole    EdifyRole
+  assignedToType  String   // "staff" | "partner"
+  assignedStaffId String?
+  assignedPartnerId String?
+  allowed         Boolean
+  blockedReason   String?
+  overrideUsed    Boolean  @default(false)
+  overrideReason  String?
+  createdAt       DateTime @default(now())
+
+  @@index([assignerId])
+  @@index([schoolId])
+  @@index([createdAt])
 }
 
 model StaffTargetProfile {

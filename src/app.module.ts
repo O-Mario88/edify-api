@@ -9,6 +9,7 @@ import { SchoolsModule } from './modules/schools/schools.module';
 import { ClustersModule } from './modules/clusters/clusters.module';
 import { SsaModule } from './modules/ssa/ssa.module';
 import { ActivitiesModule } from './modules/activities/activities.module';
+import { AssignmentModule } from './modules/assignment/assignment.module';
 import { PlanningModule } from './modules/planning/planning.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { FiltersModule } from './modules/filters/filters.module';
@@ -29,6 +30,7 @@ import { HealthController } from './health.controller';
     ClustersModule,
     SsaModule,
     ActivitiesModule,
+    AssignmentModule,
     PlanningModule,
     AnalyticsModule,
     FiltersModule,
