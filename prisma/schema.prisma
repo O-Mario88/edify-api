@@ -1110,3 +1110,79 @@ model ExamResultCollection {
   @@index([schoolId])
   @@index([status])
 }
+
+// ── Daily Debrief — the daily field-truth record ────────────────────
+// Not a UI note: an official operational record. Staff (CCEO/PL) debriefs route
+// up to PL/CD/IA/HR; partner debriefs route first to the responsible CCEO, who
+// reviews + merges them before the combined record routes upward.
+enum DebriefType {
+  staff
+  partner
+  merged
+}
+
+enum DebriefStatus {
+  draft
+  submitted
+  reviewed
+  merged
+  returned
+  archived
+}
+
+model DailyDebrief {
+  id                 String        @id @default(cuid())
+  fy                 String
+  date               DateTime      // the field day this debrief covers
+  submittedByUserId  String
+  submittedByRole    EdifyRole
+  staffId            String?       // StaffProfile id (staff debrief)
+  partnerId          String?       // Partner id (partner debrief)
+  debriefType        DebriefType   @default(staff)
+  status             DebriefStatus @default(submitted)
+  summary            String?
+  whatHappened       String?
+  whatWentWell       String?
+  whatDidNotGoWell   String?
+  blockers           String[]      // blocker keys (no_funds, transport_late, …)
+  blockerOther       String?
+  supportNeeded      String?
+  recommendations    String?
+  nextAction         String?
+  linkedSchoolIds    String[]
+  linkedClusterIds   String[]
+  linkedPartnerIds   String[]
+  linkedProjectIds   String[]
+  linkedActivityIds  String[]
+  parentDebriefId    String?       // a merged debrief's staff parent
+  mergedIntoDebriefId String?      // set on a partner debrief once merged
+  reviewedByUserId   String?
+  reviewedAt         DateTime?
+  reviewNote         String?
+  submittedAt        DateTime      @default(now())
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  deletedAt          DateTime?
+
+  recipients         DailyDebriefRecipient[]
+
+  @@index([fy, date])
+  @@index([submittedByUserId])
+  @@index([status])
+  @@index([partnerId])
+}
+
+model DailyDebriefRecipient {
+  id              String       @id @default(cuid())
+  debrief         DailyDebrief @relation(fields: [debriefId], references: [id])
+  debriefId       String
+  recipientUserId String
+  recipientRole   EdifyRole
+  routingReason   String?
+  actionRequired  Boolean      @default(false)
+  readAt          DateTime?
+  createdAt       DateTime     @default(now())
+
+  @@index([recipientUserId, readAt])
+  @@index([debriefId])
+}
