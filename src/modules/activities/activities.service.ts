@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { Activity, ActivityType, Prisma, SalesforceActivityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
+import { DomainEventService, type NotifySpec } from '../../common/realtime/domain-events.service';
 import { ScopeService } from '../../common/scope/scope.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { paginate } from '../../common/dto/pagination.dto';
@@ -18,6 +19,7 @@ export class ActivitiesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly events: DomainEventService,
     private readonly scope: ScopeService,
     private readonly assignment: AssignmentService,
   ) {}
@@ -129,7 +131,20 @@ export class ActivitiesService {
       where: { activityId: id }, update: { salesforceId: dto.salesforceId.trim(), enteredBy: user.userId, status: 'pending' },
       create: { activityId: id, salesforceId: dto.salesforceId.trim(), enteredBy: user.userId, status: 'pending' },
     });
-    await this.audit.log({ action: 'activity.salesforceEntered', subjectKind: 'Activity', subjectId: id, actorId: user.userId, actorRole: user.activeRole, payload: { salesforceId: dto.salesforceId.trim() } });
+    // Live: the activity is now in the IA verification queue — push it there.
+    const iaUserIds = await this.events.usersWithRole('ImpactAssessment');
+    await this.events.emit({
+      type: 'SalesforceIdEntered',
+      actorId: user.userId, actorRole: user.activeRole, subjectKind: 'Activity', subjectId: id,
+      payload: { salesforceId: dto.salesforceId.trim(), salesforceType: kind },
+      notify: iaUserIds.map((rid): NotifySpec => ({
+        recipientId: rid,
+        title: `${dto.salesforceId.trim()} submitted for IA verification`,
+        body: `A ${kind} was completed and needs your Salesforce confirmation.`,
+        targetRoute: '/queue', actionRequired: true, priority: 'high',
+      })),
+      liveUserIds: [user.userId],
+    });
     return updated;
   }
 
@@ -143,7 +158,36 @@ export class ActivitiesService {
       data: { status: 'ia_verified', iaVerificationStatus: 'confirmed', iaConfirmedAt: new Date(), iaConfirmedBy: user.userId, paymentStatus: activity.assignedPartnerId ? 'ia_confirmed' : 'netsuite_accountability' },
     });
     await this.prisma.activityCompletionVerification.update({ where: { activityId: id }, data: { status: 'confirmed', iaActorId: user.userId, iaActionAt: new Date() } }).catch(() => undefined);
-    await this.audit.log({ action: 'ia.confirm', subjectKind: 'Activity', subjectId: id, actorId: user.userId, actorRole: user.activeRole, payload: { salesforceId: activity.salesforceActivityId, previousStatus: activity.status } });
+
+    // Live: verification moves the activity to the accountant's payment queue
+    // (partner) and updates the responsible staff's dashboard + target progress.
+    const staffUserId = await this.events.userForStaff(activity.responsibleStaffId);
+    const isPartner = !!activity.assignedPartnerId;
+    const accountantIds = isPartner ? await this.events.usersWithRole('ProgramAccountant') : [];
+    const sf = activity.salesforceActivityId ?? 'activity';
+    const notify: NotifySpec[] = [];
+    if (staffUserId) {
+      notify.push({
+        recipientId: staffUserId,
+        title: `IA verified ${sf}`,
+        body: isPartner ? 'Sent to the accountant for payment.' : 'Ready for NetSuite accountability.',
+        targetRoute: '/plans',
+      });
+    }
+    for (const rid of accountantIds) {
+      notify.push({
+        recipientId: rid,
+        title: `Payment ready: ${sf}`,
+        body: 'IA confirmed a partner activity — clear the payment.',
+        targetRoute: '/dashboards/accountant', actionRequired: true, priority: 'high',
+      });
+    }
+    await this.events.emit({
+      type: 'IASalesforceConfirmed',
+      actorId: user.userId, actorRole: user.activeRole, subjectKind: 'Activity', subjectId: id,
+      payload: { salesforceId: activity.salesforceActivityId, previousStatus: activity.status },
+      notify, liveUserIds: [user.userId, staffUserId, ...accountantIds],
+    });
     return updated;
   }
 
@@ -235,7 +279,19 @@ export class ActivitiesService {
     if (a.paymentStatus === 'paid' || a.paymentStatus === 'closed') throw new BadRequestException('Payment already cleared.');
 
     const updated = await this.prisma.activity.update({ where: { id }, data: { paymentStatus: 'paid' } });
-    await this.audit.log({ action: 'payment.cleared', subjectKind: 'Activity', subjectId: id, actorId: user.userId, actorRole: user.activeRole, payload: { partner: a.assignedPartnerId, salesforceId: a.salesforceActivityId } });
+
+    // Live: the partner payment closed — refresh the staff/CCEO + partner views.
+    const staffUserId = await this.events.userForStaff(a.responsibleStaffId);
+    const sf = a.salesforceActivityId ?? 'the partner activity';
+    await this.events.emit({
+      type: 'AccountantPaymentPaid',
+      actorId: user.userId, actorRole: user.activeRole, subjectKind: 'Activity', subjectId: id,
+      payload: { partner: a.assignedPartnerId, salesforceId: a.salesforceActivityId },
+      notify: staffUserId
+        ? [{ recipientId: staffUserId, title: 'Partner payment cleared', body: `Payment for ${sf} is paid.`, targetRoute: '/plans' }]
+        : [],
+      liveUserIds: [user.userId, staffUserId],
+    });
     return updated;
   }
 }

@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { validateEnv } from './config/env.validation';
 import { PrismaModule } from './prisma/prisma.module';
 import { CommonModule } from './common/common.module';
+import { RealtimeModule } from './common/realtime/realtime.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { GeographyModule } from './modules/geography/geography.module';
 import { SchoolsModule } from './modules/schools/schools.module';
@@ -25,6 +26,7 @@ import { HealthController } from './health.controller';
     ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
     PrismaModule,
     CommonModule,
+    RealtimeModule,
     AuthModule,
     GeographyModule,
     SchoolsModule,
