@@ -9,6 +9,23 @@ export class QueryActivitiesDto extends PaginationDto {
   @IsOptional() @IsString() fy?: string;
   @IsOptional() @IsString() quarter?: string;
   @IsOptional() @IsString() deliveryType?: string;
+  /** "true" → only the caller's own activities (My Plan). */
+  @IsOptional() @IsString() mine?: string;
+}
+
+export class RescheduleActivityDto {
+  @IsString() scheduledDate!: string; // ISO date
+  @IsString() reason!: string;
+}
+
+export class ReassignActivityDto {
+  @IsString() deliveryType!: 'staff' | 'partner';
+  @IsOptional() @IsString() assignedPartnerId?: string;
+  @IsOptional() @IsString() responsibleStaffId?: string;
+}
+
+export class ReasonDto {
+  @IsString() reason!: string;
 }
 
 export class CreateActivityDto {

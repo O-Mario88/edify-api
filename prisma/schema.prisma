@@ -136,6 +136,8 @@ enum ActivityStatus {
   returned
   rejected
   rescheduled
+  cancelled
+  deferred
 }
 
 enum EvidenceStatus {
@@ -665,6 +667,10 @@ model Activity {
   iaConfirmedAt        DateTime?
   iaConfirmedBy        String?
   paymentStatus        PaymentStatus      @default(none)
+
+  // Reschedule trail (plan-as-list): count drives the slip limit.
+  rescheduleCount     Int      @default(0)
+  lastReason          String?
 
   // Training/cluster-meeting completion detail
   teachersAttended    Int?

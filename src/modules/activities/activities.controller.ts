@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ActivitiesService } from './activities.service';
-import { CompleteActivityDto, CreateActivityDto, QueryActivitiesDto } from './dto/activities.dto';
+import { CompleteActivityDto, CreateActivityDto, QueryActivitiesDto, RescheduleActivityDto, ReassignActivityDto, ReasonDto } from './dto/activities.dto';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/rbac/permissions.guard';
 import { RequirePermissions } from '../../common/rbac/require-permissions.decorator';
@@ -38,5 +38,30 @@ export class ActivitiesController {
   @RequirePermissions(PERMISSIONS.IA_VERIFY)
   iaConfirm(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.activities.iaConfirm(id, user);
+  }
+
+  // Plan-as-list row actions.
+  @Post(':id/reschedule')
+  @RequirePermissions(PERMISSIONS.ACTIVITY_ASSIGN)
+  reschedule(@Param('id') id: string, @Body() dto: RescheduleActivityDto, @CurrentUser() user: AuthUser) {
+    return this.activities.reschedule(id, dto, user);
+  }
+
+  @Post(':id/reassign')
+  @RequirePermissions(PERMISSIONS.ACTIVITY_ASSIGN)
+  reassign(@Param('id') id: string, @Body() dto: ReassignActivityDto, @CurrentUser() user: AuthUser) {
+    return this.activities.reassign(id, dto, user);
+  }
+
+  @Post(':id/cancel')
+  @RequirePermissions(PERMISSIONS.ACTIVITY_ASSIGN)
+  cancel(@Param('id') id: string, @Body() dto: ReasonDto, @CurrentUser() user: AuthUser) {
+    return this.activities.cancel(id, dto, user);
+  }
+
+  @Post(':id/defer')
+  @RequirePermissions(PERMISSIONS.ACTIVITY_ASSIGN)
+  defer(@Param('id') id: string, @Body() dto: ReasonDto, @CurrentUser() user: AuthUser) {
+    return this.activities.defer(id, dto, user);
   }
 }

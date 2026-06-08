@@ -10,6 +10,7 @@ import { AssignmentService } from '../assignment/assignment.service';
 import { CompleteActivityDto, CreateActivityDto, QueryActivitiesDto } from './dto/activities.dto';
 
 const TRAINING_TYPES: ActivityType[] = ['training', 'school_improvement_training', 'cluster_meeting', 'cluster_training', 'core_training', 'project_activity'];
+const RESCHEDULE_SLIP_LIMIT = 3; // an activity may be moved at most this many times
 const sfKind = (t: ActivityType): SalesforceActivityType => (TRAINING_TYPES.includes(t) ? 'training' : 'visit');
 
 @Injectable()
@@ -45,6 +46,8 @@ export class ActivitiesService {
     const schoolIds = await this.scopedSchoolIds(user);
     const where: Prisma.ActivityWhereInput = { deletedAt: null };
     if (schoolIds) where.schoolId = { in: schoolIds.length ? schoolIds : ['__none__'] };
+    // My Plan: only the caller's own activities.
+    if (query.mine === 'true' && user.staffProfileId) where.responsibleStaffId = user.staffProfileId;
     if (query.status) where.status = query.status as Prisma.ActivityWhereInput['status'];
     if (query.activityType) where.activityType = query.activityType as Prisma.ActivityWhereInput['activityType'];
     if (query.deliveryType) where.deliveryType = query.deliveryType as Prisma.ActivityWhereInput['deliveryType'];
@@ -77,10 +80,15 @@ export class ActivitiesService {
       responsibleStaffId: dto.responsibleStaffId, assignedPartnerId: dto.assignedPartnerId,
     });
 
+    // Default a staff-delivered activity's owner to the creator (so it shows in
+    // their My Plan); a PL may assign to a supervised CCEO via responsibleStaffId.
+    const responsibleStaffId = dto.assignedPartnerId
+      ? (dto.responsibleStaffId ?? undefined)
+      : (dto.responsibleStaffId ?? user.staffProfileId ?? undefined);
     const activity = await this.prisma.activity.create({
       data: {
         activityType: dto.activityType, schoolId, clusterId: dto.clusterId, fy: dto.fy, quarter: dto.quarter,
-        plannedMonth: dto.plannedMonth, plannedWeek: dto.plannedWeek, responsibleStaffId: dto.responsibleStaffId,
+        plannedMonth: dto.plannedMonth, plannedWeek: dto.plannedWeek, responsibleStaffId,
         assignedPartnerId: dto.assignedPartnerId, deliveryType: dto.assignedPartnerId ? 'partner' : 'staff',
         status: dto.assignedPartnerId ? 'assigned_to_partner' : 'planned',
         salesforceActivityType: sfKind(dto.activityType),
@@ -134,6 +142,58 @@ export class ActivitiesService {
     });
     await this.prisma.activityCompletionVerification.update({ where: { activityId: id }, data: { status: 'confirmed', iaActorId: user.userId, iaActionAt: new Date() } }).catch(() => undefined);
     await this.audit.log({ action: 'ia.confirm', subjectKind: 'Activity', subjectId: id, actorId: user.userId, actorRole: user.activeRole, payload: { salesforceId: activity.salesforceActivityId, previousStatus: activity.status } });
+    return updated;
+  }
+
+  // ── Plan-as-list lifecycle (My Plan row actions) ──────────────────
+  private async getInScope(id: string, user: AuthUser): Promise<Activity> {
+    const activity = await this.prisma.activity.findUnique({ where: { id } });
+    if (!activity) throw new NotFoundException('Activity not found');
+    await this.assertInScope(activity, user);
+    return activity;
+  }
+
+  async reschedule(id: string, dto: { scheduledDate: string; reason: string }, user: AuthUser) {
+    const a = await this.getInScope(id, user);
+    if ((a.rescheduleCount ?? 0) >= RESCHEDULE_SLIP_LIMIT) {
+      throw new BadRequestException(`Reschedule limit reached (${RESCHEDULE_SLIP_LIMIT}). Escalate or convert this activity instead.`);
+    }
+    const updated = await this.prisma.activity.update({
+      where: { id },
+      data: {
+        scheduledDate: new Date(dto.scheduledDate), rescheduleCount: { increment: 1 }, lastReason: dto.reason,
+        status: a.status === 'cancelled' || a.status === 'deferred' ? 'planned' : 'rescheduled',
+      },
+    });
+    await this.audit.log({ action: 'activity.reschedule', subjectKind: 'Activity', subjectId: id, actorId: user.userId, actorRole: user.activeRole, payload: { reason: dto.reason, moveNo: (a.rescheduleCount ?? 0) + 1 } });
+    return updated;
+  }
+
+  async reassign(id: string, dto: { deliveryType: 'staff' | 'partner'; assignedPartnerId?: string; responsibleStaffId?: string }, user: AuthUser) {
+    await this.getInScope(id, user);
+    const updated = await this.prisma.activity.update({
+      where: { id },
+      data: {
+        deliveryType: dto.deliveryType,
+        assignedPartnerId: dto.deliveryType === 'partner' ? (dto.assignedPartnerId ?? undefined) : null,
+        responsibleStaffId: dto.deliveryType === 'staff' ? (dto.responsibleStaffId ?? undefined) : undefined,
+      },
+    });
+    await this.audit.log({ action: 'activity.reassign', subjectKind: 'Activity', subjectId: id, actorId: user.userId, actorRole: user.activeRole, payload: { deliveryType: dto.deliveryType } });
+    return updated;
+  }
+
+  async cancel(id: string, dto: { reason: string }, user: AuthUser) {
+    await this.getInScope(id, user);
+    const updated = await this.prisma.activity.update({ where: { id }, data: { status: 'cancelled', lastReason: dto.reason } });
+    await this.audit.log({ action: 'activity.cancel', subjectKind: 'Activity', subjectId: id, actorId: user.userId, actorRole: user.activeRole, payload: { reason: dto.reason } });
+    return updated;
+  }
+
+  async defer(id: string, dto: { reason: string }, user: AuthUser) {
+    await this.getInScope(id, user);
+    const updated = await this.prisma.activity.update({ where: { id }, data: { status: 'deferred', lastReason: dto.reason } });
+    await this.audit.log({ action: 'activity.defer', subjectKind: 'Activity', subjectId: id, actorId: user.userId, actorRole: user.activeRole, payload: { reason: dto.reason } });
     return updated;
   }
 }
