@@ -3,6 +3,18 @@ import { EdifyRole } from '@prisma/client';
 // Canonical permission keys. Controllers reference these — never raw role lists.
 export const PERMISSIONS = {
   SCHOOL_VIEW: 'school.view',
+  // Operational School Directory list/profile. Distinct from SCHOOL_VIEW:
+  // the directory is an operational working surface, limited to the roles
+  // that actually work schools (CCEO, PL, IA) + the project coordinator who
+  // assigns project schools. CD/RVP/HR/Accountant/Partner are blocked — they
+  // get aggregates from analytics, never the operational list.
+  SCHOOL_DIRECTORY_VIEW: 'schoolDirectory.view',
+  // Recruitment Intelligence — the recruit-more-vs-focus advisory.
+  RECRUITMENT_INTELLIGENCE_VIEW: 'recruitment.view',
+  // HR people surfaces — staff performance, leave planner, daily field debrief.
+  STAFF_PERFORMANCE_VIEW: 'staffPerformance.view',
+  LEAVE_PLANNER_VIEW: 'leavePlanner.view',
+  DAILY_DEBRIEF_VIEW: 'dailyDebrief.view',
   SCHOOL_UPLOAD: 'school.upload',
   SCHOOL_EDIT: 'school.edit',
   SCHOOL_RESOLVE_DUPLICATE: 'school.resolveDuplicate',
@@ -39,40 +51,52 @@ const P = PERMISSIONS;
 export const ROLE_PERMISSIONS: Record<EdifyRole, PermissionKey[]> = {
   Admin: Object.values(P),
   CountryDirector: [
+    // No SCHOOL_DIRECTORY_VIEW — CD leads through analytics, not the
+    // operational directory. SCHOOL_VIEW retained for any aggregate that
+    // still references it; the directory endpoints now gate on the new perm.
     P.SCHOOL_VIEW, P.SCHOOL_EDIT, P.CLUSTER_VIEW, P.CLUSTER_ASSIGN, P.CLUSTER_OVERRIDE,
     P.PLANNING_RECALC, P.SSA_VIEW, P.PLANNING_VIEW, P.PLANNING_CREATE, P.ACTIVITY_ASSIGN,
     P.EVIDENCE_REVIEW, P.BUDGET_VIEW_SUMMARY, P.BUDGET_VIEW_DETAIL, P.BUDGET_APPROVE,
     P.STAFF_MANAGE, P.PARTNER_VIEW, P.PROJECT_MANAGE, P.ANALYTICS_VIEW, P.EXPORT,
+    P.RECRUITMENT_INTELLIGENCE_VIEW,
   ],
   RegionalVicePresident: [
+    // No SCHOOL_DIRECTORY_VIEW — summary analytics + recruitment intelligence only.
     P.SCHOOL_VIEW, P.CLUSTER_VIEW, P.SSA_VIEW, P.PLANNING_VIEW,
-    P.BUDGET_VIEW_SUMMARY, P.ANALYTICS_VIEW,
+    P.BUDGET_VIEW_SUMMARY, P.ANALYTICS_VIEW, P.RECRUITMENT_INTELLIGENCE_VIEW,
   ],
   CountryProgramLead: [
-    P.SCHOOL_VIEW, P.SCHOOL_EDIT, P.CLUSTER_VIEW, P.CLUSTER_ASSIGN, P.SSA_VIEW,
+    P.SCHOOL_VIEW, P.SCHOOL_DIRECTORY_VIEW, P.SCHOOL_EDIT, P.CLUSTER_VIEW, P.CLUSTER_ASSIGN, P.SSA_VIEW,
     P.PLANNING_VIEW, P.PLANNING_CREATE, P.ACTIVITY_ASSIGN, P.ACTIVITY_COMPLETE,
     P.EVIDENCE_REVIEW, P.BUDGET_VIEW_DETAIL, P.PARTNER_VIEW, P.ANALYTICS_VIEW, P.EXPORT,
+    P.RECRUITMENT_INTELLIGENCE_VIEW,
   ],
   CCEO: [
-    P.SCHOOL_VIEW, P.CLUSTER_VIEW, P.SSA_VIEW, P.PLANNING_VIEW, P.PLANNING_CREATE,
+    P.SCHOOL_VIEW, P.SCHOOL_DIRECTORY_VIEW, P.CLUSTER_VIEW, P.SSA_VIEW, P.PLANNING_VIEW, P.PLANNING_CREATE,
     P.ACTIVITY_ASSIGN, P.ACTIVITY_COMPLETE, P.EVIDENCE_REVIEW, P.PARTNER_VIEW,
-    P.ANALYTICS_VIEW,
+    P.ANALYTICS_VIEW, P.RECRUITMENT_INTELLIGENCE_VIEW,
   ],
   ImpactAssessment: [
-    P.SCHOOL_VIEW, P.SCHOOL_UPLOAD, P.SCHOOL_EDIT, P.SCHOOL_RESOLVE_DUPLICATE,
+    P.SCHOOL_VIEW, P.SCHOOL_DIRECTORY_VIEW, P.SCHOOL_UPLOAD, P.SCHOOL_EDIT, P.SCHOOL_RESOLVE_DUPLICATE,
     P.CLUSTER_VIEW, P.CLUSTER_ASSIGN, P.CLUSTER_OVERRIDE, P.PLANNING_RECALC,
     P.SSA_VIEW, P.SSA_UPLOAD, P.PLANNING_VIEW, P.EVIDENCE_REVIEW, P.IA_VERIFY,
-    P.ANALYTICS_VIEW, P.EXPORT,
+    P.ANALYTICS_VIEW, P.EXPORT, P.RECRUITMENT_INTELLIGENCE_VIEW,
   ],
   ProgramAccountant: [
+    // No SCHOOL_DIRECTORY_VIEW — finance/accountability only.
     P.SCHOOL_VIEW, P.PLANNING_VIEW, P.PAYMENT_ACT, P.BUDGET_VIEW_DETAIL,
     P.ANALYTICS_VIEW, P.EXPORT,
   ],
   HumanResources: [
+    // People surfaces only — staff performance, leave planner, daily debrief.
+    // No SCHOOL_DIRECTORY_VIEW.
     P.STAFF_MANAGE, P.ANALYTICS_VIEW,
+    P.STAFF_PERFORMANCE_VIEW, P.LEAVE_PLANNER_VIEW, P.DAILY_DEBRIEF_VIEW,
   ],
   ProjectCoordinator: [
-    P.SCHOOL_VIEW, P.PLANNING_VIEW, P.PLANNING_CREATE, P.ACTIVITY_ASSIGN,
+    // Explicitly granted directory access — the coordinator assigns project
+    // schools from the directory (spec §1 "unless explicitly granted").
+    P.SCHOOL_VIEW, P.SCHOOL_DIRECTORY_VIEW, P.PLANNING_VIEW, P.PLANNING_CREATE, P.ACTIVITY_ASSIGN,
     P.EVIDENCE_REVIEW, P.PROJECT_MANAGE, P.PARTNER_VIEW, P.ANALYTICS_VIEW,
   ],
   PartnerAdmin: [

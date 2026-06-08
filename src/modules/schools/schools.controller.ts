@@ -36,27 +36,27 @@ export class SchoolsController {
   }
 
   @Get()
-  @RequirePermissions(PERMISSIONS.SCHOOL_VIEW)
+  @RequirePermissions(PERMISSIONS.SCHOOL_DIRECTORY_VIEW)
   list(@Query() query: QuerySchoolsDto, @CurrentUser() user: AuthUser) {
     return this.schools.list(query, user);
   }
 
   @Get(':schoolId')
-  @RequirePermissions(PERMISSIONS.SCHOOL_VIEW)
+  @RequirePermissions(PERMISSIONS.SCHOOL_DIRECTORY_VIEW)
   getOne(@Param('schoolId') schoolId: string, @CurrentUser() user: AuthUser) {
     return this.schools.getOne(schoolId, user);
   }
 
   // Scope-aware "Plan Action" resolver for ONE school (spec §10).
   @Get(':schoolId/next-actions')
-  @RequirePermissions(PERMISSIONS.SCHOOL_VIEW)
+  @RequirePermissions(PERMISSIONS.SCHOOL_DIRECTORY_VIEW)
   nextActions(@Param('schoolId') schoolId: string, @Query('fy') fy: string | undefined, @CurrentUser() user: AuthUser) {
     return this.schools.nextActions(schoolId, user, fy);
   }
 
   // The full school improvement journey — the main workflow (spec §3).
   @Get(':schoolId/workflow')
-  @RequirePermissions(PERMISSIONS.SCHOOL_VIEW)
+  @RequirePermissions(PERMISSIONS.SCHOOL_DIRECTORY_VIEW)
   workflow(@Param('schoolId') schoolId: string, @Query('fy') fy: string | undefined, @CurrentUser() user: AuthUser) {
     return this.schools.workflow(schoolId, user, fy);
   }

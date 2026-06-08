@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AnalyticsService } from './analytics.service';
 import { ContributionService } from './contribution.service';
 import { CorrelationService } from './correlation.service';
+import { RecruitmentService } from './recruitment.service';
 import { ContributionQueryDto, ContributionDrilldownDto } from './dto/contribution-query.dto';
 import { SsaPerformanceQueryDto, SsaDrilldownQueryDto, InterventionImprovementQueryDto } from './dto/ssa-performance-query.dto';
 import { CorrelationQueryDto } from './dto/correlation-query.dto';
@@ -23,7 +24,16 @@ export class AnalyticsController {
     private readonly analytics: AnalyticsService,
     private readonly contribution: ContributionService,
     private readonly correlation: CorrelationService,
+    private readonly recruitment: RecruitmentService,
   ) {}
+
+  // Recruitment Intelligence — recruit-more vs focus-on-current advisory.
+  // Gated on its own permission (CD/RVP/IA/PL/CCEO), NOT analytics-wide.
+  @Get('recruitment-recommendation')
+  @RequirePermissions(PERMISSIONS.RECRUITMENT_INTELLIGENCE_VIEW)
+  recruitment2(@Query('fy') fy: string | undefined, @Query('districtId') districtId: string | undefined, @CurrentUser() u: AuthUser) {
+    return this.recruitment.recommendation(u, { fy, districtId });
+  }
 
   @Get('dashboard') dashboard(@CurrentUser() u: AuthUser) { return this.analytics.dashboardSummary(u); }
   @Get('school-directory') directory(@CurrentUser() u: AuthUser) { return this.analytics.schoolDirectorySummary(u); }
