@@ -23,7 +23,7 @@ export class ClustersService {
     const where: Prisma.ClusterWhereInput = { deletedAt: null };
     if (!scope.countryScope && !scope.canViewSummaryOnly) where.districtId = { in: scope.districtIds.length ? scope.districtIds : ['__none__'] };
     return this.prisma.cluster.findMany({
-      where, orderBy: { name: 'asc' },
+      where, orderBy: { name: 'asc' }, take: 1000, // safety bound on payload
       include: { district: { select: { name: true } }, subCounty: { select: { name: true } }, _count: { select: { schools: true } } },
     });
   }
@@ -35,7 +35,7 @@ export class ClustersService {
     if (!cluster) throw new NotFoundException('Cluster not found');
     if (!scope.countryScope && !scope.canViewSummaryOnly && !scope.districtIds.includes(cluster.districtId)) throw new ForbiddenException('Cluster outside your scope');
     const schools = await this.prisma.school.findMany({
-      where: { clusterId, deletedAt: null },
+      where: { clusterId, deletedAt: null }, take: 500, // a cluster roster is small; bound anyway
       include: { subCounty: { select: { name: true } }, accountOwner: { include: { user: { select: { name: true } } } }, ssaRecords: { where: { deletedAt: null }, orderBy: { dateOfSsa: 'desc' }, take: 1 } },
       orderBy: { name: 'asc' },
     });
@@ -57,7 +57,7 @@ export class ClustersService {
     const districtFilter: Prisma.SubCountyWhereInput = (!scope.countryScope && !scope.canViewSummaryOnly)
       ? { districtId: { in: scope.districtIds.length ? scope.districtIds : ['__none__'] } } : {};
     const subs = await this.prisma.subCounty.findMany({
-      where: { ...districtFilter, clusters: { none: { deletedAt: null, status: 'active' } } },
+      where: { ...districtFilter, clusters: { none: { deletedAt: null, status: 'active' } } }, take: 1000,
       include: { district: { select: { name: true } }, _count: { select: { schools: { where: { deletedAt: null, clusterStatus: 'unclustered' } } } } },
       orderBy: [{ district: { name: 'asc' } }, { name: 'asc' }],
     });

@@ -303,6 +303,9 @@ model StaffSupervisorAssignment {
   createdAt    DateTime     @default(now())
 
   @@unique([superviseeId, supervisorId])
+  // Scope resolution looks up supervisees BY supervisorId (the @@unique leads
+  // with superviseeId, so supervisorId queries were unindexed).
+  @@index([supervisorId])
 }
 
 model StaffGeographyAssignment {
@@ -314,6 +317,9 @@ model StaffGeographyAssignment {
   district   District?    @relation(fields: [districtId], references: [id])
   districtId String?
   createdAt  DateTime     @default(now())
+
+  // Scope resolution loads a staff member's geography by staffId.
+  @@index([staffId])
 }
 
 model StaffSchoolAssignment {
@@ -712,6 +718,11 @@ model Activity {
   @@index([fy, quarter])
   @@index([responsibleStaffId])
   @@index([status])
+  // Hot-path indexes for the command-center, budget, and accountant queries.
+  @@index([scheduledDate])
+  @@index([assignedPartnerId])
+  @@index([iaVerificationStatus, paymentStatus])
+  @@index([evidenceStatus])
 }
 
 // ─────────────────────── Evidence ───────────────────────

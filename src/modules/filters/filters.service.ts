@@ -17,13 +17,18 @@ export class FiltersService {
     const scope = await this.scope.resolveUserScope(user);
     // Geography options scoped: country roles see all; scoped roles see only the
     // regions/districts/sub-counties their schools touch.
-    const schoolWhere: Prisma.SchoolWhereInput = { deletedAt: null, ...this.scope.aggregateSchoolWhere(scope) };
-    const inScopeSchools = await this.prisma.school.findMany({ where: schoolWhere, select: { regionId: true, districtId: true, subCountyId: true } });
-    const regionIds = uniq(inScopeSchools.map((s) => s.regionId));
-    const districtIds = uniq(inScopeSchools.map((s) => s.districtId));
-    const subCountyIds = uniq(inScopeSchools.map((s) => s.subCountyId).filter((x): x is string => !!x));
-
     const all = scope.countryScope || scope.canViewSummaryOnly;
+    // Country roles see every region/district anyway — don't load the school set
+    // just to discard the ids. Scoped roles derive their geography from a
+    // DISTINCT projection (bounded, deduped at the DB) rather than every row.
+    let regionIds: string[] = [], districtIds: string[] = [], subCountyIds: string[] = [];
+    if (!all) {
+      const schoolWhere: Prisma.SchoolWhereInput = { deletedAt: null, ...this.scope.aggregateSchoolWhere(scope) };
+      const geo = await this.prisma.school.findMany({ where: schoolWhere, select: { regionId: true, districtId: true, subCountyId: true }, distinct: ['regionId', 'districtId', 'subCountyId'], take: 5000 });
+      regionIds = uniq(geo.map((s) => s.regionId));
+      districtIds = uniq(geo.map((s) => s.districtId));
+      subCountyIds = uniq(geo.map((s) => s.subCountyId).filter((x): x is string => !!x));
+    }
     const [regions, districts, subCounties, clusters] = await Promise.all([
       this.prisma.region.findMany({ where: all ? {} : { id: { in: regionIds.length ? regionIds : ['__none__'] } }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
       this.prisma.district.findMany({ where: all ? {} : { id: { in: districtIds.length ? districtIds : ['__none__'] } }, select: { id: true, name: true, regionId: true }, orderBy: { name: 'asc' } }),

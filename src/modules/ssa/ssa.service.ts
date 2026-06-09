@@ -34,7 +34,7 @@ export class SsaService {
     const scope = await this.scope.resolveUserScope(user);
     const school = await this.prisma.school.findFirst({ where: { schoolId, deletedAt: null, ...this.scope.schoolWhere(scope) } });
     if (!school) throw new NotFoundException('School not found or outside your scope');
-    return this.prisma.ssaRecord.findMany({ where: { schoolId: school.id, deletedAt: null }, orderBy: { dateOfSsa: 'desc' }, include: { scores: true } });
+    return this.prisma.ssaRecord.findMany({ where: { schoolId: school.id, deletedAt: null }, orderBy: { dateOfSsa: 'desc' }, take: 20, include: { scores: true } });
   }
 
   // IA uploads SSA: derives FY/quarter, writes scores, updates readiness.

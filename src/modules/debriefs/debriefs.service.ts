@@ -185,11 +185,11 @@ export class DebriefsService {
   async today(user: AuthUser) {
     const start = new Date(); start.setHours(0, 0, 0, 0);
     const mine = await this.prisma.dailyDebrief.findMany({
-      where: { deletedAt: null, submittedByUserId: user.userId, date: { gte: start } }, orderBy: { submittedAt: 'desc' },
+      where: { deletedAt: null, submittedByUserId: user.userId, date: { gte: start } }, orderBy: { submittedAt: 'desc' }, take: 50,
     });
     const partnerInputs = await this.prisma.dailyDebrief.findMany({
       where: { deletedAt: null, debriefType: 'partner', status: 'submitted', mergedIntoDebriefId: null, recipients: { some: { recipientUserId: user.userId } } },
-      orderBy: { submittedAt: 'desc' },
+      orderBy: { submittedAt: 'desc' }, take: 100,
     });
     return { submittedToday: mine.length > 0, mine, partnerInputs };
   }

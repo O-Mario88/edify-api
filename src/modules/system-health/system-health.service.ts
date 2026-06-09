@@ -26,7 +26,7 @@ export class SystemHealthService {
     const [
       noOwner, noCluster, noSsa, unmatched, dupes,
       activitiesNoLink, staffNoSupervisor, staffNoPrimaryDistrict,
-      paymentsNoIa,
+      paymentsNoIa, paidWithoutIa,
     ] = await Promise.all([
       this.prisma.school.count({ where: { deletedAt: null, accountOwnerId: null } }),
       this.prisma.school.count({ where: { deletedAt: null, clusterId: null } }),
@@ -39,6 +39,9 @@ export class SystemHealthService {
       this.prisma.staffProfile.count({ where: { deletedAt: null, onboardingState: 'active', supervisorLinks: { none: {} }, superviseeLinks: { none: {} }, user: { roles: { hasSome: ['CCEO', 'ProjectCoordinator', 'PartnerFieldOfficer'] } } } }),
       this.prisma.staffProfile.count({ where: { deletedAt: null, onboardingState: 'active', primaryDistrictId: null } }),
       this.prisma.paymentRequest.count({ where: { status: 'pending_ia' } }),
+      // INVARIANT: no payment without IA confirmation. An activity that is
+      // cleared/paid while NOT IA-confirmed is a hard integrity violation.
+      this.prisma.activity.count({ where: { deletedAt: null, paymentStatus: { in: ['accountant_cleared', 'paid'] }, iaVerificationStatus: { not: 'confirmed' } } }),
     ]);
 
     add('schools-without-account-owner', 'warning', noOwner, 'Schools without an account owner');
@@ -50,6 +53,7 @@ export class SystemHealthService {
     add('staff-without-supervisor', 'error', staffNoSupervisor, 'Active staff with no supervisor');
     add('staff-without-primary-district', 'warning', staffNoPrimaryDistrict, 'Active staff with no primary district');
     add('payments-without-ia-confirmation', 'info', paymentsNoIa, 'Payment requests still awaiting IA confirmation');
+    add('paid-activities-bypassing-ia', 'error', paidWithoutIa, 'Activities cleared/paid without IA confirmation (payment must never bypass verification)');
 
     // ── Cluster + planning integrity (§21) ──────────────────────────
     const [clustersNoSchools, mismatch, planningReadyButUnclustered] = await Promise.all([

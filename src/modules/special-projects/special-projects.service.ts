@@ -60,12 +60,12 @@ export class SpecialProjectsService {
     if (!p) throw new NotFoundException('Project not found');
 
     // Scope: non-country roles must have at least one project school in scope.
+    // DB-side existence check (no loading the whole in-scope school set).
     if (!scope.countryScope && !scope.canViewSummaryOnly) {
-      const inScopeIds = new Set(
-        (await this.prisma.school.findMany({ where: this.scope.aggregateSchoolWhere(scope), select: { id: true } })).map((s) => s.id),
-      );
-      const touches = p.schoolAssignments.some((a) => inScopeIds.has(a.schoolId));
-      if (!touches) throw new NotFoundException('Project not in your scope');
+      const inScope = await this.prisma.projectSchoolAssignment.count({
+        where: { projectId: p.id, school: this.scope.aggregateSchoolWhere(scope) },
+      });
+      if (inScope === 0) throw new NotFoundException('Project not in your scope');
     }
 
     return {
