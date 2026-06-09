@@ -5,3 +5,5 @@ dist
 *.log
 .DS_Store
 coverage
+# Uploaded evidence files (live on a mounted volume in production).
+uploads/
