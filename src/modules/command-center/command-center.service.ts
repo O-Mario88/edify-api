@@ -27,6 +27,17 @@ export interface ActionItem {
 
 const EXAMPLES = 6; // top-N concrete examples surfaced per rolled-up source
 
+// An activity counts as "support is scheduled" in any of these states.
+const SCHEDULED_STATES: ActivityStatus[] = [
+  ActivityStatus.planned, ActivityStatus.scheduled, ActivityStatus.assigned_to_partner,
+  ActivityStatus.partner_scheduled, ActivityStatus.in_progress, ActivityStatus.evidence_uploaded,
+  ActivityStatus.evidence_accepted, ActivityStatus.salesforce_id_required, ActivityStatus.awaiting_ia_verification,
+  ActivityStatus.ia_verified, ActivityStatus.accountant_confirmed, ActivityStatus.completed,
+];
+const VISIT_TYPES = ['school_visit', 'follow_up_visit', 'coaching_visit', 'in_school_support', 'core_visit'];
+const TRAINING_TYPES = ['training', 'school_improvement_training', 'cluster_training', 'core_training'];
+const CORE_PACKAGE_TARGET = 4; // a Core school needs 4 visits + 4 trainings
+
 @Injectable()
 export class CommandCenterService {
   constructor(private readonly prisma: PrismaService, private readonly scope: ScopeService) {}
@@ -93,6 +104,34 @@ export class CommandCenterService {
       for (const s of ex) out.push(this.one(`ssa-${s.id}`, s.schoolType === 'core' ? 'high' : 'medium', 'ssa-gap', s.name, `${s.schoolType === 'core' ? 'Core school' : 'School'} has no current-FY SSA — schedule SSA.`, { kind: 'School', id: s.id, name: s.name }, { label: 'Schedule SSA', href: '/planning' }));
     }
 
+    // 2b. Planning-ready (clustered + verified SSA) but NO support scheduled —
+    //     red alert: the school is ready and waiting, nothing is planned for it.
+    const readyNoPlan = { ...schoolWhere, deletedAt: null, planningReadiness: 'ready' as const, activities: { none: { deletedAt: null, status: { in: SCHEDULED_STATES } } } };
+    const readyNoPlanCount = await this.prisma.school.count({ where: readyNoPlan });
+    if (readyNoPlanCount > 0) {
+      const ex = await this.prisma.school.findMany({ where: readyNoPlan, select: { id: true, name: true, schoolType: true }, take: EXAMPLES, orderBy: [{ schoolType: 'asc' }, { name: 'asc' }] });
+      out.push(this.rollup('no-plan', 'critical', `${readyNoPlanCount} school${readyNoPlanCount === 1 ? ' has' : 's have'} SSA but no plan`, 'SSA is done and the school is ready, but no visit or training is scheduled. Plan the two weakest interventions.', { label: 'Plan support', href: '/planning' }, readyNoPlanCount));
+      for (const s of ex) out.push(this.one(`noplan-${s.id}`, 'critical', 'no-plan', s.name, `${s.schoolType === 'core' ? 'Core school' : 'School'} is ready but has no scheduled support.`, { kind: 'School', id: s.id, name: s.name }, { label: 'Plan support', href: '/planning' }));
+    }
+
+    // 2c. Core-package gaps — a Core school needs 4 visits + 4 trainings.
+    const coreSchools = await this.prisma.school.findMany({
+      where: { ...schoolWhere, deletedAt: null, schoolType: 'core' },
+      select: { id: true, name: true, activities: { where: { deletedAt: null, status: { in: SCHEDULED_STATES } }, select: { activityType: true } } },
+      take: 200,
+    });
+    const coreGaps = coreSchools
+      .map((s) => {
+        const visits = s.activities.filter((a) => VISIT_TYPES.includes(a.activityType)).length;
+        const trainings = s.activities.filter((a) => TRAINING_TYPES.includes(a.activityType)).length;
+        return { id: s.id, name: s.name, visits, trainings, missing: Math.max(0, CORE_PACKAGE_TARGET - visits) + Math.max(0, CORE_PACKAGE_TARGET - trainings) };
+      })
+      .filter((s) => s.missing > 0);
+    if (coreGaps.length > 0) {
+      out.push(this.rollup('core-package', 'high', `${coreGaps.length} Core school${coreGaps.length === 1 ? '' : 's'} missing package items`, `Each Core school needs ${CORE_PACKAGE_TARGET} visits + ${CORE_PACKAGE_TARGET} trainings (2 staff + 2 partner each). Schedule the missing items.`, { label: 'Plan core package', href: '/planning' }, coreGaps.length));
+      for (const s of coreGaps.slice(0, EXAMPLES)) out.push(this.one(`core-${s.id}`, 'high', 'core-package', s.name, `Has ${s.visits}/${CORE_PACKAGE_TARGET} visits, ${s.trainings}/${CORE_PACKAGE_TARGET} trainings — ${s.missing} package item${s.missing === 1 ? '' : 's'} missing.`, { kind: 'School', id: s.id, name: s.name }, { label: 'Plan core package', href: '/planning' }));
+    }
+
     // 3. Owned activities awaiting the caller's action.
     const owned = this.ownedActivityWhere(scope);
     if (owned) {
@@ -106,6 +145,15 @@ export class CommandCenterService {
       if (overdueCount > 0) {
         out.push(this.rollup('overdue', 'critical', `${overdueCount} scheduled activit${overdueCount === 1 ? 'y is' : 'ies are'} overdue`, 'Past their scheduled date. Complete them or reschedule.', { label: 'Open My Plan', href: '/my-plan' }, overdueCount));
         for (const a of overdue) out.push(this.one(`ov-${a.id}`, 'critical', 'overdue', `${this.label(a.activityType)} · ${a.school?.name ?? 'cluster'}`, 'Overdue — complete or reschedule.', undefined, { label: 'Complete', href: '/my-plan' }));
+      }
+
+      // Evidence overdue — work whose date has passed but no evidence uploaded.
+      const evidenceOverdue = { ...owned, deletedAt: null, evidenceStatus: 'none' as const, scheduledDate: { lt: now }, status: { in: [ActivityStatus.in_progress, ActivityStatus.partner_scheduled, ActivityStatus.assigned_to_partner] } };
+      const evOverdueCount = await this.prisma.activity.count({ where: evidenceOverdue });
+      if (evOverdueCount > 0) {
+        const ex = await this.prisma.activity.findMany({ where: evidenceOverdue, select: { id: true, activityType: true, deliveryType: true, school: { select: { name: true } } }, take: EXAMPLES, orderBy: { scheduledDate: 'asc' } });
+        out.push(this.rollup('evidence-overdue', 'critical', `${evOverdueCount} activit${evOverdueCount === 1 ? 'y is' : 'ies are'} missing evidence`, 'The scheduled date has passed but no evidence was uploaded. Chase the evidence so the work can be verified and paid.', { label: 'Open My Plan', href: '/my-plan' }, evOverdueCount));
+        for (const a of ex) out.push(this.one(`evov-${a.id}`, 'critical', 'evidence-overdue', `${this.label(a.activityType)} · ${a.school?.name ?? 'cluster'}`, `${a.deliveryType === 'partner' ? 'Partner' : 'Staff'} work overdue — no evidence yet.`, undefined, { label: 'Open My Plan', href: '/my-plan' }));
       }
 
       // Partner evidence uploaded → staff must review.
