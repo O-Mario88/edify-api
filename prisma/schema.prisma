@@ -597,6 +597,17 @@ model SsaRecord {
   salesforceId String?
   verificationStatus VerificationStatus @default(pending)
 
+  // Collection source + verification provenance (the contract-worthy QA layer).
+  // Staff-collected SSA is auto-verified; partner-collected needs staff/IA review.
+  collectorType      SsaCollectorType @default(staff)
+  verificationSource String?          // staff_self_verified | partner_submitted | ia_verified | imported_previous_fy
+  collectedByUserId  String?
+  collectedByPartnerId String?
+  verifiedByUserId   String?
+  verifiedAt         DateTime?
+  qaReviewedByUserId String?
+  qaReviewedAt       DateTime?
+
   uploadedBy  String   // userId (IA)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -604,6 +615,16 @@ model SsaRecord {
 
   @@index([schoolId])
   @@index([fy])
+  @@index([collectorType])
+  @@index([verificationStatus])
+}
+
+enum SsaCollectorType {
+  staff
+  partner
+  ia
+  imported_previous_fy
+  system_migration
 }
 
 model SsaScore {

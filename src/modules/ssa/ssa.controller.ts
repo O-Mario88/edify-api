@@ -29,6 +29,19 @@ export class SsaController {
     return this.ssa.forSchool(schoolId, user);
   }
 
+  // 10% client-portfolio verification QA (spec §10–§12).
+  @Get('verification-requirements')
+  @RequirePermissions(PERMISSIONS.SSA_VIEW)
+  verificationRequirements(@Query('staffId') staffId: string | undefined, @Query('fy') fy: string | undefined, @CurrentUser() user: AuthUser) {
+    return this.ssa.verificationRequirements(user, { staffId, fy });
+  }
+
+  @Get('verification-summary')
+  @RequirePermissions(PERMISSIONS.SSA_VIEW)
+  verificationSummary(@Query('fy') fy: string | undefined, @CurrentUser() user: AuthUser) {
+    return this.ssa.verificationSummary(user, { fy });
+  }
+
   @Post()
   @RequirePermissions(PERMISSIONS.SSA_UPLOAD)
   upload(@Body() dto: UploadSsaDto, @CurrentUser() user: AuthUser) {
