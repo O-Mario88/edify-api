@@ -1,4 +1,4 @@
-import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { SpecialProjectsService } from './special-projects.service';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
@@ -24,5 +24,20 @@ export class SpecialProjectsController {
   @Get(':id')
   getOne(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.projects.getOne(id, user);
+  }
+
+  // Assign a School-Directory school to a project. The ONLY write path —
+  // gated on PROJECT_MANAGE (CD / ProjectCoordinator / Admin) and validated
+  // against the Directory so no orphan/phantom assignments are possible.
+  @Post(':id/schools')
+  @RequirePermissions(PERMISSIONS.PROJECT_MANAGE)
+  assignSchool(@Param('id') id: string, @Body() body: { schoolId?: string }, @CurrentUser() user: AuthUser) {
+    return this.projects.assignSchool(user, id, body?.schoolId ?? '');
+  }
+
+  @Delete(':id/schools/:schoolId')
+  @RequirePermissions(PERMISSIONS.PROJECT_MANAGE)
+  removeSchool(@Param('id') id: string, @Param('schoolId') schoolId: string, @CurrentUser() user: AuthUser) {
+    return this.projects.removeSchool(user, id, schoolId);
   }
 }

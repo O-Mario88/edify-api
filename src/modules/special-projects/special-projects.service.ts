@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ScopeService } from '../../common/scope/scope.service';
+import { AuditService } from '../../common/audit/audit.service';
 import { AuthUser } from '../../common/auth/auth-user';
 
 // Special Projects — interventions/pilots that span schools + partners, with
@@ -9,7 +10,11 @@ import { AuthUser } from '../../common/auth/auth-user';
 // only see projects touching schools in their scope.
 @Injectable()
 export class SpecialProjectsService {
-  constructor(private readonly prisma: PrismaService, private readonly scope: ScopeService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scope: ScopeService,
+    private readonly audit: AuditService,
+  ) {}
 
   async list(user: AuthUser) {
     const scope = await this.scope.resolveUserScope(user);
@@ -71,5 +76,42 @@ export class SpecialProjectsService {
       partners: p.partnerAssignments.map((a) => ({ id: a.partner.id, name: a.partner.name, isCertified: a.partner.isCertified, certificationStatus: a.partner.certificationStatus })),
       impactSnapshots: p.impactSnapshots.map((s) => ({ fy: s.fy, metrics: s.metricsJson })),
     };
+  }
+
+  // ── Assignment (the ONLY backend write path for project schools) ──────────
+  // INVARIANT: special-project schools come ONLY from the School Directory.
+  // `schoolId` here is the business School ID (e.g. "40118") the Directory uses;
+  // we resolve it to a real School row and reject anything not in the Directory.
+  async assignSchool(user: AuthUser, projectId: string, schoolBizId: string) {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, deletedAt: null }, select: { id: true, name: true } });
+    if (!project) throw new NotFoundException('Project not found');
+
+    const id = (schoolBizId ?? '').trim();
+    if (!id) throw new NotFoundException('schoolId is required');
+    const school = await this.prisma.school.findFirst({ where: { schoolId: id }, select: { id: true, schoolId: true, name: true } });
+    if (!school) throw new NotFoundException(`School ${id} is not in the School Directory — assign it from the Directory only.`);
+
+    const assignment = await this.prisma.projectSchoolAssignment.upsert({
+      where: { projectId_schoolId: { projectId: project.id, schoolId: school.id } },
+      create: { projectId: project.id, schoolId: school.id },
+      update: {},
+    });
+    await this.audit.log({
+      action: 'project.assignSchool', subjectKind: 'Project', subjectId: project.id,
+      actorId: user.userId, actorRole: user.activeRole,
+      payload: { schoolId: school.schoolId, schoolName: school.name, projectName: project.name },
+    });
+    return { ok: true, assignmentId: assignment.id, projectId: project.id, schoolId: school.schoolId };
+  }
+
+  async removeSchool(user: AuthUser, projectId: string, schoolBizId: string) {
+    const school = await this.prisma.school.findFirst({ where: { schoolId: (schoolBizId ?? '').trim() }, select: { id: true, schoolId: true } });
+    if (!school) throw new NotFoundException(`School ${schoolBizId} is not in the School Directory.`);
+    await this.prisma.projectSchoolAssignment.deleteMany({ where: { projectId, schoolId: school.id } });
+    await this.audit.log({
+      action: 'project.removeSchool', subjectKind: 'Project', subjectId: projectId,
+      actorId: user.userId, actorRole: user.activeRole, payload: { schoolId: school.schoolId },
+    });
+    return { ok: true, projectId, schoolId: school.schoolId };
   }
 }
