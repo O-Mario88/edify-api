@@ -1257,6 +1257,7 @@ enum FundRequestPeriod {
 enum FundRequestStatus {
   submitted
   approved
+  returned
   rejected
   disbursed
 }

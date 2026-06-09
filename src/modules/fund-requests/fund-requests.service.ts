@@ -70,27 +70,58 @@ export class FundRequestsService {
     return fr;
   }
 
+  // Resolve submitter user ids → display names in one batch.
+  private async withNames(rows: { submittedByUserId: string }[]) {
+    const ids = [...new Set(rows.map((r) => r.submittedByUserId))];
+    const users = await this.prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } });
+    const byId = new Map(users.map((u) => [u.id, u.name]));
+    return (id: string) => byId.get(id) ?? 'Unknown';
+  }
+
   async list(user: AuthUser) {
     const canApprove = permissionsForRole(user.activeRole).includes(PERMISSIONS.BUDGET_APPROVE);
     const where: Prisma.FundRequestWhereInput = canApprove
       ? {} // approvers see the full queue
       : { submittedByUserId: user.userId }; // submitters see their own
-    return this.prisma.fundRequest.findMany({ where, orderBy: { createdAt: 'desc' }, take: 200 });
+    const rows = await this.prisma.fundRequest.findMany({ where, orderBy: { createdAt: 'desc' }, take: 200 });
+    const nameOf = await this.withNames(rows);
+    return rows.map((r) => ({
+      id: r.id, fy: r.fy, period: r.period, periodKey: r.periodKey, scope: r.scope,
+      submittedBy: nameOf(r.submittedByUserId), submittedByRole: r.submittedByRole,
+      totalAmount: r.totalAmount, activityCount: r.activityCount, status: r.status,
+      reviewedAt: r.reviewedAt, reviewNote: r.reviewNote, createdAt: r.createdAt,
+    }));
   }
 
-  async review(user: AuthUser, id: string, approve: boolean, note?: string) {
+  /** One fund request's full detail (for the dynamic detail panel). */
+  async getOne(user: AuthUser, id: string) {
+    const fr = await this.prisma.fundRequest.findUnique({ where: { id } });
+    if (!fr) throw new NotFoundException('Fund request not found');
+    const canApprove = permissionsForRole(user.activeRole).includes(PERMISSIONS.BUDGET_APPROVE);
+    if (!canApprove && fr.submittedByUserId !== user.userId) throw new ForbiddenException('Not your fund request');
+    const nameOf = await this.withNames([fr]);
+    return {
+      id: fr.id, fy: fr.fy, period: fr.period, periodKey: fr.periodKey, scope: fr.scope,
+      submittedBy: nameOf(fr.submittedByUserId), submittedByRole: fr.submittedByRole,
+      totalAmount: fr.totalAmount, activityCount: fr.activityCount, status: fr.status,
+      reviewedAt: fr.reviewedAt, reviewNote: fr.reviewNote, createdAt: fr.createdAt,
+    };
+  }
+
+  async review(user: AuthUser, id: string, action: 'approve' | 'return' | 'reject', note?: string) {
     const fr = await this.prisma.fundRequest.findUnique({ where: { id } });
     if (!fr) throw new NotFoundException('Fund request not found');
     if (fr.status !== 'submitted') throw new BadRequestException(`Fund request is already ${fr.status}.`);
     if (!permissionsForRole(user.activeRole).includes(PERMISSIONS.BUDGET_APPROVE)) {
       throw new ForbiddenException('Only an approver (BUDGET_APPROVE) can review fund requests.');
     }
+    const status = action === 'approve' ? 'approved' : action === 'return' ? 'returned' : 'rejected';
     const updated = await this.prisma.fundRequest.update({
       where: { id },
-      data: { status: approve ? 'approved' : 'rejected', reviewedByUserId: user.userId, reviewedAt: new Date(), reviewNote: note },
+      data: { status: status as never, reviewedByUserId: user.userId, reviewedAt: new Date(), reviewNote: note },
     });
     await this.audit.log({
-      action: approve ? 'fundRequest.approve' : 'fundRequest.reject', subjectKind: 'FundRequest', subjectId: id,
+      action: `fundRequest.${action}`, subjectKind: 'FundRequest', subjectId: id,
       actorId: user.userId, actorRole: user.activeRole, payload: { note: note ?? null },
     });
     return updated;

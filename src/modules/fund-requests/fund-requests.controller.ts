@@ -29,15 +29,27 @@ export class FundRequestsController {
     return this.fundRequests.list(user);
   }
 
+  @Get(':id')
+  @RequirePermissions(PERMISSIONS.PLANNING_VIEW)
+  getOne(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.fundRequests.getOne(user, id);
+  }
+
   @Post(':id/approve')
   @RequirePermissions(PERMISSIONS.BUDGET_APPROVE)
   approve(@Param('id') id: string, @Body() body: { note?: string }, @CurrentUser() user: AuthUser) {
-    return this.fundRequests.review(user, id, true, body?.note);
+    return this.fundRequests.review(user, id, 'approve', body?.note);
+  }
+
+  @Post(':id/return')
+  @RequirePermissions(PERMISSIONS.BUDGET_APPROVE)
+  return(@Param('id') id: string, @Body() body: { note?: string }, @CurrentUser() user: AuthUser) {
+    return this.fundRequests.review(user, id, 'return', body?.note);
   }
 
   @Post(':id/reject')
   @RequirePermissions(PERMISSIONS.BUDGET_APPROVE)
   reject(@Param('id') id: string, @Body() body: { note?: string }, @CurrentUser() user: AuthUser) {
-    return this.fundRequests.review(user, id, false, body?.note);
+    return this.fundRequests.review(user, id, 'reject', body?.note);
   }
 }
