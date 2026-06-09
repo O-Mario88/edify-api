@@ -44,6 +44,10 @@ export class ReadinessService {
     const latest = school.ssaRecords[0];
     const currentFy = getOperationalFY();
     const ssaCurrent = !!latest && latest.fy === currentFy;
+    // INVARIANT: only a VERIFIED (IA-confirmed) current-FY SSA unlocks planning &
+    // recommendations. Partner-collected SSA sits at 'pending' until IA confirms;
+    // staff SSA is auto-confirmed. An unverified SSA must not drive a plan.
+    const ssaVerified = ssaCurrent && latest!.verificationStatus === 'confirmed';
     const clustered = !!school.clusterId && school.clusterStatus === 'clustered';
 
     // Authoritative SSA status — keeps the stored enum and the SSA record from
@@ -53,7 +57,8 @@ export class ReadinessService {
     if (ssaCurrent) ssaStatus = 'done';
     else if (ssaStatus === 'done') ssaStatus = 'not_done';
 
-    const planningReadiness = this.coarse(clustered, ssaCurrent);
+    // Planning gate uses the VERIFIED flag, not mere presence.
+    const planningReadiness = this.coarse(clustered, ssaVerified);
     const updated = await this.prisma.school.update({
       where: { id: schoolId },
       data: {

@@ -25,12 +25,18 @@ export class PaginationDto {
   @IsString()
   sortDir?: 'asc' | 'desc';
 
+  // `skip`/`take` are DERIVED from page/pageSize — they are not request inputs.
+  // The no-op setters exist only so class-transformer doesn't crash if a client
+  // sends `?take=`/`?skip=` (it tries to assign onto the instance); the incoming
+  // value is intentionally ignored so pagination can't be driven out of band.
   get skip(): number {
     return (this.page - 1) * this.pageSize;
   }
+  set skip(_v: number) { /* derived — ignore inbound */ }
   get take(): number {
     return this.pageSize;
   }
+  set take(_v: number) { /* derived — ignore inbound */ }
 }
 
 export interface Paginated<T> {
