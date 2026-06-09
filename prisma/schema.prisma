@@ -948,6 +948,14 @@ model Partner {
   regionName String?
   trainsOn  String[]
   notes     String?
+  // CD onboarding profile (item 17/18): eligibility, coverage, contract.
+  contactPerson      String?
+  email              String?
+  phone              String?
+  coverageDistricts  String[]
+  contractStatus     String?  // active | pending | expired | none
+  onboardedByUserId  String?
+  onboardedAt        DateTime?
   // Certification (item 14): correlation separates certified vs non-certified
   // partner support, driving the staff-vs-certified-partner contribution view.
   isCertified         Boolean  @default(false)

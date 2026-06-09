@@ -43,22 +43,24 @@ export class ReadinessService {
     });
     const latest = school.ssaRecords[0];
     const currentFy = getOperationalFY();
-    const ssaCurrent = !!latest && latest.fy === currentFy;
-    // INVARIANT: only a VERIFIED (IA-confirmed) current-FY SSA unlocks planning &
-    // recommendations. Partner-collected SSA sits at 'pending' until IA confirms;
-    // staff SSA is auto-confirmed. An unverified SSA must not drive a plan.
-    const ssaVerified = ssaCurrent && latest!.verificationStatus === 'confirmed';
+    // INVARIANT (corrected): a COMPLETE current-FY SSA unlocks planning. QA
+    // verification is a separate quality-assurance layer (the 10% sample), NOT a
+    // planning gate — staff SSA is trusted, partner SSA is usable once complete.
+    // We must not delay school support across 15,000+ schools waiting on QA.
+    // Completeness is enforced at upload (School ID + 8 intervention scores), so a
+    // current-FY record present == complete for the planning gate.
+    const ssaComplete = !!latest && latest.fy === currentFy;
     const clustered = !!school.clusterId && school.clusterStatus === 'clustered';
 
     // Authoritative SSA status — keeps the stored enum and the SSA record from
     // drifting (M3): a current-FY record → done; a stale 'done' with no current
     // record → not_done; otherwise preserve scheduled/partner_assigned.
     let ssaStatus = school.currentFySsaStatus;
-    if (ssaCurrent) ssaStatus = 'done';
+    if (ssaComplete) ssaStatus = 'done';
     else if (ssaStatus === 'done') ssaStatus = 'not_done';
 
-    // Planning gate uses the VERIFIED flag, not mere presence.
-    const planningReadiness = this.coarse(clustered, ssaVerified);
+    // Planning gate uses COMPLETENESS (not QA verification).
+    const planningReadiness = this.coarse(clustered, ssaComplete);
     const updated = await this.prisma.school.update({
       where: { id: schoolId },
       data: {

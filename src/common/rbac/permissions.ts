@@ -39,6 +39,9 @@ export const PERMISSIONS = {
   COST_SETTINGS_MANAGE: 'costSettings.manage',
   STAFF_MANAGE: 'staff.manage',
   PARTNER_VIEW: 'partner.view',
+  // CD onboards/activates partners and sets coverage/certification. Eligibility
+  // for assignment is driven by this onboarding data.
+  PARTNER_MANAGE: 'partner.manage',
   PROJECT_MANAGE: 'project.manage',
   ANALYTICS_VIEW: 'analytics.view',
   EXPORT: 'data.export',
@@ -61,7 +64,7 @@ export const ROLE_PERMISSIONS: Record<EdifyRole, PermissionKey[]> = {
     P.PLANNING_RECALC, P.SSA_VIEW, P.PLANNING_VIEW, P.PLANNING_CREATE, P.ACTIVITY_ASSIGN,
     P.EVIDENCE_REVIEW, P.BUDGET_VIEW_SUMMARY, P.BUDGET_VIEW_DETAIL, P.BUDGET_APPROVE,
     P.COST_SETTINGS_MANAGE,
-    P.STAFF_MANAGE, P.PARTNER_VIEW, P.PROJECT_MANAGE, P.ANALYTICS_VIEW, P.EXPORT,
+    P.STAFF_MANAGE, P.PARTNER_VIEW, P.PARTNER_MANAGE, P.PROJECT_MANAGE, P.ANALYTICS_VIEW, P.EXPORT,
     P.RECRUITMENT_INTELLIGENCE_VIEW,
   ],
   RegionalVicePresident: [
