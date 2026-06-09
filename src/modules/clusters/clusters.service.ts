@@ -88,7 +88,7 @@ export class ClustersService {
             activityType: { in: ['cluster_meeting', 'cluster_training', 'school_improvement_training'] },
             status: { notIn: ['cancelled', 'rejected', 'deferred', 'not_planned'] },
           },
-          select: { activityType: true, status: true, scheduledDate: true, plannedMonth: true, rescheduleCount: true },
+          select: { activityType: true, status: true, scheduledDate: true, plannedMonth: true, rescheduleCount: true, clusterSlot: true },
           orderBy: [{ plannedMonth: 'asc' }, { scheduledDate: 'asc' }],
         },
       },
@@ -105,13 +105,20 @@ export class ClustersService {
 
     return clusters.map((c) => {
       const schoolsWithSsa = c.schools.filter((s) => s.currentFySsaStatus === 'done').length;
-      const meetings = c.activities.filter((a) => a.activityType === 'cluster_meeting');
-      const sitAct = c.activities.find((a) => a.activityType === 'school_improvement_training' || a.activityType === 'cluster_training');
+      // Prefer the EXPLICIT slot tag; fall back to ordering for untagged (legacy)
+      // meetings so historical data still reads sensibly.
+      const bySlot = (slot: string) => c.activities.find((a) => a.clusterSlot === slot);
+      const untagged = c.activities.filter((a) => a.activityType === 'cluster_meeting' && !a.clusterSlot);
+      let u = 0;
+      const sitAct = bySlot('sit') ?? c.activities.find((a) => !a.clusterSlot && (a.activityType === 'school_improvement_training' || a.activityType === 'cluster_training'));
+      const firstAct = bySlot('first_meeting') ?? untagged[u++];
+      const secondAct = bySlot('second_meeting') ?? untagged[u++];
+      const thirdAct = bySlot('third_meeting') ?? untagged[u++];
 
       const sit = slotOf(sitAct);
-      const firstMeeting = slotOf(meetings[0]);
-      const secondMeeting = firstMeeting === 'Completed' ? slotOf(meetings[1]) : 'Not Yet Due';
-      const thirdMeeting = secondMeeting === 'Completed' ? slotOf(meetings[2]) : 'Not Yet Due';
+      const firstMeeting = slotOf(firstAct);
+      const secondMeeting = firstMeeting === 'Completed' ? slotOf(secondAct) : 'Not Yet Due';
+      const thirdMeeting = secondMeeting === 'Completed' ? slotOf(thirdAct) : 'Not Yet Due';
 
       // First outstanding slot drives the bucket (SIT first, then meetings in order).
       const gapCategory =

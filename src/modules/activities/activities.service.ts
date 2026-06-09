@@ -94,6 +94,7 @@ export class ActivitiesService {
         activityType: dto.activityType, schoolId, clusterId: dto.clusterId, fy: dto.fy, quarter: dto.quarter,
         plannedMonth: dto.plannedMonth, plannedWeek: dto.plannedWeek, responsibleStaffId,
         assignedPartnerId: dto.assignedPartnerId, deliveryType: isPartner ? 'partner' : 'staff',
+        clusterSlot: dto.clusterSlot ?? undefined,
         status: isPartner ? 'assigned_to_partner' : 'planned',
         salesforceActivityType: sfKind(dto.activityType),
       },

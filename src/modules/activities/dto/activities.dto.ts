@@ -1,5 +1,5 @@
 import { IsEnum, IsInt, IsOptional, IsString } from 'class-validator';
-import { ActivityType } from '@prisma/client';
+import { ActivityType, ClusterMeetingSlot } from '@prisma/client';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 export class QueryActivitiesDto extends PaginationDto {
@@ -39,6 +39,8 @@ export class CreateActivityDto {
   @IsOptional() @IsString() responsibleStaffId?: string;
   @IsOptional() @IsString() assignedPartnerId?: string;
   @IsOptional() @IsString() deliveryType?: 'staff' | 'partner';
+  /** Explicit cluster slot: 'sit' | 'first_meeting' | 'second_meeting' | 'third_meeting'. */
+  @IsOptional() @IsEnum(ClusterMeetingSlot) clusterSlot?: ClusterMeetingSlot;
 }
 
 export class CompleteActivityDto {

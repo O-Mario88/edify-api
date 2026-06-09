@@ -114,6 +114,16 @@ enum ActivityType {
   core_training
 }
 
+// Explicit cluster-meeting slot identity — a cluster activity can be tagged as
+// the SIT or the 1st/2nd/3rd meeting, so slot status is read from the tag rather
+// than inferred from ordering. Null for non-cluster (or untagged legacy) work.
+enum ClusterMeetingSlot {
+  sit
+  first_meeting
+  second_meeting
+  third_meeting
+}
+
 enum DeliveryType {
   staff
   partner
@@ -681,6 +691,8 @@ model Activity {
   assignedPartner    Partner?      @relation(fields: [assignedPartnerId], references: [id])
   assignedPartnerId  String?
   deliveryType       DeliveryType  @default(staff)
+  // Explicit cluster slot (SIT / 1st / 2nd / 3rd) when this is cluster work.
+  clusterSlot        ClusterMeetingSlot?
 
   purposeIntervention SsaIntervention?
   status        ActivityStatus  @default(not_planned)
