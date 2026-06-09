@@ -21,6 +21,10 @@ const INTERVENTION_META: { key: SsaIntervention; code: string; label: string }[]
 
 export type SsaGroupBy = 'region' | 'district' | 'subCounty' | 'cluster' | 'cceo';
 
+// "By CCEO" is a supervisory lens — only roles that oversee multiple CCEOs may
+// use it. A CCEO grouping by CCEO would just see themselves; RVP is summary-only.
+const CCEO_GROUP_ROLES = ['CountryProgramLead', 'CountryDirector', 'ImpactAssessment'];
+
 // Scoped, filter-aware analytics summaries. Every count is constrained by the
 // caller's UserScope — never the whole table for a non-country role.
 @Injectable()
@@ -191,6 +195,9 @@ export class AnalyticsService {
 
     return {
       fy, groupBy, schoolType: params.schoolType ?? 'all',
+      // "By CCEO" grouping is a supervisory lens — only PL/CD/IA may use it (a
+      // CCEO would just see themselves). Data is already role-scoped above.
+      canGroupByCceo: CCEO_GROUP_ROLES.includes(user.activeRole),
       interventions: INTERVENTION_META.map((m) => ({ code: m.code, label: m.label })),
       rows,
     };
@@ -301,6 +308,7 @@ export class AnalyticsService {
 
     return {
       currentFy, prevFy, groupBy, schoolType: params.schoolType ?? 'all',
+      canGroupByCceo: CCEO_GROUP_ROLES.includes(user.activeRole),
       interventions: INTERVENTION_META.map((m) => ({ code: m.code, label: m.label })),
       rows,
     };
