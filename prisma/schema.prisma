@@ -1234,3 +1234,43 @@ model DailyDebriefRecipient {
   @@index([recipientUserId, readAt])
   @@index([debriefId])
 }
+
+// ── Fund requests (the Budget → Fund Request stage) ──────────────────────────
+// A submitted snapshot of a period's scheduled-and-costed work, routed for
+// approval. The amount is computed from the schedule at submit time (never
+// typed); a request with any cost-missing activity is blocked from submission.
+enum FundRequestPeriod {
+  weekly
+  monthly
+  quarterly
+  annual
+}
+
+enum FundRequestStatus {
+  submitted
+  approved
+  rejected
+  disbursed
+}
+
+model FundRequest {
+  id                String            @id @default(cuid())
+  fy                String
+  period            FundRequestPeriod
+  periodKey         String            // e.g. "2026" | "2026-Q3" | "2026-M2"
+  scope             String            // own | team | country (the submitter's lens)
+  submittedByUserId String
+  submittedByRole   EdifyRole
+  totalAmount       Float
+  activityCount     Int
+  status            FundRequestStatus @default(submitted)
+  reviewedByUserId  String?
+  reviewedAt        DateTime?
+  reviewNote        String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([status])
+  @@index([fy, period])
+  @@index([submittedByUserId])
+}

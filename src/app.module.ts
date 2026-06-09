@@ -23,6 +23,7 @@ import { SpecialProjectsModule } from './modules/special-projects/special-projec
 import { BudgetModule } from './modules/budget/budget.module';
 import { CommandCenterModule } from './modules/command-center/command-center.module';
 import { EvidenceModule } from './modules/evidence/evidence.module';
+import { FundRequestsModule } from './modules/fund-requests/fund-requests.module';
 import { SystemHealthModule } from './modules/system-health/system-health.module';
 import { HealthController } from './health.controller';
 
@@ -51,6 +52,7 @@ import { HealthController } from './health.controller';
     BudgetModule,
     CommandCenterModule,
     EvidenceModule,
+    FundRequestsModule,
     SystemHealthModule,
     // Roadmap modules (scaffolded next): users/staff, planning, evidence,
     // salesforce-verification, payments, annual-plan-budget, special-projects,
