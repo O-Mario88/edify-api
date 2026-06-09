@@ -11,6 +11,9 @@ export class QueryActivitiesDto extends PaginationDto {
   @IsOptional() @IsString() deliveryType?: string;
   /** "true" → only the caller's own activities (My Plan). */
   @IsOptional() @IsString() mine?: string;
+  /** "active" → still-actionable work (Planning / My Plan); "completed" → the
+   *  Completed Activities Log (verified / paid / closed / cancelled / rejected). */
+  @IsOptional() @IsString() statusGroup?: string;
 }
 
 export class RescheduleActivityDto {
@@ -36,6 +39,9 @@ export class CreateActivityDto {
   @IsString() quarter!: string;
   @IsOptional() @IsInt() plannedMonth?: number;
   @IsOptional() @IsInt() plannedWeek?: number;
+  /** Exact date (ISO) — required for date-specific work (cluster meetings,
+   *  trainings, SIT). Visits may schedule by month/week only. */
+  @IsOptional() @IsString() scheduledDate?: string;
   @IsOptional() @IsString() responsibleStaffId?: string;
   @IsOptional() @IsString() assignedPartnerId?: string;
   @IsOptional() @IsString() deliveryType?: 'staff' | 'partner';

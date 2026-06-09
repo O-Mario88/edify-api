@@ -12,6 +12,9 @@ import { CompleteActivityDto, CreateActivityDto, QueryActivitiesDto } from './dt
 
 const TRAINING_TYPES: ActivityType[] = ['training', 'school_improvement_training', 'cluster_meeting', 'cluster_training', 'core_training', 'project_activity'];
 const RESCHEDULE_SLIP_LIMIT = 3; // an activity may be moved at most this many times
+// Active = still actionable (Planning / My Plan). Completed = the log.
+const ACTIVE_STATUSES = ['planned', 'scheduled', 'assigned_to_partner', 'partner_scheduled', 'in_progress', 'evidence_uploaded', 'evidence_accepted', 'salesforce_id_required', 'awaiting_ia_verification', 'returned', 'deferred'];
+const COMPLETED_STATUSES = ['ia_verified', 'accountant_confirmed', 'completed', 'cancelled', 'rejected'];
 const sfKind = (t: ActivityType): SalesforceActivityType => (TRAINING_TYPES.includes(t) ? 'training' : 'visit');
 
 @Injectable()
@@ -51,6 +54,8 @@ export class ActivitiesService {
     // My Plan: only the caller's own activities.
     if (query.mine === 'true' && user.staffProfileId) where.responsibleStaffId = user.staffProfileId;
     if (query.status) where.status = query.status as Prisma.ActivityWhereInput['status'];
+    else if (query.statusGroup === 'active') where.status = { in: ACTIVE_STATUSES as never };
+    else if (query.statusGroup === 'completed') where.status = { in: COMPLETED_STATUSES as never };
     if (query.activityType) where.activityType = query.activityType as Prisma.ActivityWhereInput['activityType'];
     if (query.deliveryType) where.deliveryType = query.deliveryType as Prisma.ActivityWhereInput['deliveryType'];
     if (query.fy) where.fy = query.fy;
@@ -60,7 +65,7 @@ export class ActivitiesService {
       where.schoolId = s?.id ?? '__none__';
     }
     const [data, total] = await this.prisma.$transaction([
-      this.prisma.activity.findMany({ where, skip: query.skip, take: query.take, orderBy: { createdAt: 'desc' }, include: { school: { select: { schoolId: true, name: true } } } }),
+      this.prisma.activity.findMany({ where, skip: query.skip, take: query.take, orderBy: { createdAt: 'desc' }, include: { school: { select: { schoolId: true, name: true, district: { select: { name: true } } } }, cluster: { select: { name: true } }, assignedPartner: { select: { name: true } } } }),
       this.prisma.activity.count({ where }),
     ]);
     return paginate(data, total, query);
@@ -93,6 +98,7 @@ export class ActivitiesService {
       data: {
         activityType: dto.activityType, schoolId, clusterId: dto.clusterId, fy: dto.fy, quarter: dto.quarter,
         plannedMonth: dto.plannedMonth, plannedWeek: dto.plannedWeek, responsibleStaffId,
+        scheduledDate: dto.scheduledDate ? new Date(dto.scheduledDate) : undefined,
         assignedPartnerId: dto.assignedPartnerId, deliveryType: isPartner ? 'partner' : 'staff',
         clusterSlot: dto.clusterSlot ?? undefined,
         status: isPartner ? 'assigned_to_partner' : 'planned',
