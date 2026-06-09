@@ -64,6 +64,72 @@ export class ClustersService {
     return subs.map((s) => ({ subCountyId: s.id, subCounty: s.name, district: s.district.name, districtId: s.districtId, unclusteredSchools: s._count.schools }));
   }
 
+  /** Per-cluster meeting-slot planning status, derived from REAL cluster
+   *  activities (no fabricated slots). SIT = the cluster's SIT/cluster-training
+   *  activity; meetings 1/2/3 = its cluster_meeting activities ordered by
+   *  planned date. Later meetings are "Not Yet Due" until the prior completes. */
+  async clusterPlanning(user: AuthUser) {
+    const scope = await this.scope.resolveUserScope(user);
+    const where: Prisma.ClusterWhereInput = { deletedAt: null, status: 'active' };
+    if (!scope.countryScope && !scope.canViewSummaryOnly) where.districtId = { in: scope.districtIds.length ? scope.districtIds : ['__none__'] };
+
+    const clusters = await this.prisma.cluster.findMany({
+      where, take: 1000, orderBy: { name: 'asc' },
+      include: {
+        district: { select: { name: true } },
+        subCounty: { select: { name: true } },
+        _count: { select: { schools: true } },
+        schools: { where: { deletedAt: null }, select: { currentFySsaStatus: true } },
+        activities: {
+          // Exclude cancelled/rejected/deferred work — a dropped meeting must
+          // not count toward a filled slot.
+          where: {
+            deletedAt: null,
+            activityType: { in: ['cluster_meeting', 'cluster_training', 'school_improvement_training'] },
+            status: { notIn: ['cancelled', 'rejected', 'deferred', 'not_planned'] },
+          },
+          select: { activityType: true, status: true, scheduledDate: true, plannedMonth: true, rescheduleCount: true },
+          orderBy: [{ plannedMonth: 'asc' }, { scheduledDate: 'asc' }],
+        },
+      },
+    });
+
+    const DONE = new Set(['completed', 'evidence_uploaded', 'evidence_accepted', 'salesforce_id_required', 'awaiting_ia_verification', 'ia_verified', 'accountant_confirmed']);
+    type Slot = 'Completed' | 'Scheduled' | 'Rescheduled' | 'Missing' | 'Not Yet Due';
+    const slotOf = (a?: { status: string; rescheduleCount: number }): Slot => {
+      if (!a) return 'Missing';
+      if (DONE.has(a.status)) return 'Completed';
+      if (a.rescheduleCount > 0) return 'Rescheduled';
+      return 'Scheduled';
+    };
+
+    return clusters.map((c) => {
+      const schoolsWithSsa = c.schools.filter((s) => s.currentFySsaStatus === 'done').length;
+      const meetings = c.activities.filter((a) => a.activityType === 'cluster_meeting');
+      const sitAct = c.activities.find((a) => a.activityType === 'school_improvement_training' || a.activityType === 'cluster_training');
+
+      const sit = slotOf(sitAct);
+      const firstMeeting = slotOf(meetings[0]);
+      const secondMeeting = firstMeeting === 'Completed' ? slotOf(meetings[1]) : 'Not Yet Due';
+      const thirdMeeting = secondMeeting === 'Completed' ? slotOf(meetings[2]) : 'Not Yet Due';
+
+      // First outstanding slot drives the bucket (SIT first, then meetings in order).
+      const gapCategory =
+        sit === 'Missing' ? 'no_sit'
+          : firstMeeting === 'Missing' ? 'no_first_meeting'
+            : secondMeeting === 'Missing' ? 'no_second_meeting'
+              : thirdMeeting === 'Missing' ? 'no_third_meeting'
+                : 'no_third_meeting';
+
+      return {
+        id: c.id, clusterName: c.name,
+        district: c.district?.name ?? '', subCounty: c.subCounty?.name ?? c.subCountyName ?? '',
+        schoolsCount: c._count.schools, schoolsWithSsa,
+        sit, firstMeeting, secondMeeting, thirdMeeting, gapCategory,
+      };
+    });
+  }
+
   /** Recommendations: same sub-county → same district (→ region needs override). */
   async recommendations(schoolId: string, user: AuthUser) {
     const scope = await this.scope.resolveUserScope(user);

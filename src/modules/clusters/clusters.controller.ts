@@ -28,6 +28,14 @@ export class ClustersController {
     return this.clusters.subCountiesWithoutClusters(user);
   }
 
+  // Per-cluster meeting-slot planning status (SIT + 1st/2nd/3rd meetings),
+  // derived from real cluster activities. Powers the live cluster gap board.
+  @Get('planning')
+  @RequirePermissions(PERMISSIONS.CLUSTER_VIEW)
+  planning(@CurrentUser() user: AuthUser) {
+    return this.clusters.clusterPlanning(user);
+  }
+
   @Get(':id/schools')
   @RequirePermissions(PERMISSIONS.CLUSTER_VIEW)
   clusterSchools(@Param('id') id: string, @CurrentUser() user: AuthUser) {
