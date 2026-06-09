@@ -34,6 +34,9 @@ export const PERMISSIONS = {
   BUDGET_VIEW_SUMMARY: 'budget.viewSummary',
   BUDGET_VIEW_DETAIL: 'budget.viewDetail',
   BUDGET_APPROVE: 'budget.approve',
+  // The CD-owned rate card. Only the Country Director (and Admin) may create or
+  // edit official cost settings — no staff invents costs. Spec §10.
+  COST_SETTINGS_MANAGE: 'costSettings.manage',
   STAFF_MANAGE: 'staff.manage',
   PARTNER_VIEW: 'partner.view',
   PROJECT_MANAGE: 'project.manage',
@@ -57,6 +60,7 @@ export const ROLE_PERMISSIONS: Record<EdifyRole, PermissionKey[]> = {
     P.SCHOOL_VIEW, P.SCHOOL_EDIT, P.CLUSTER_VIEW, P.CLUSTER_ASSIGN, P.CLUSTER_OVERRIDE,
     P.PLANNING_RECALC, P.SSA_VIEW, P.PLANNING_VIEW, P.PLANNING_CREATE, P.ACTIVITY_ASSIGN,
     P.EVIDENCE_REVIEW, P.BUDGET_VIEW_SUMMARY, P.BUDGET_VIEW_DETAIL, P.BUDGET_APPROVE,
+    P.COST_SETTINGS_MANAGE,
     P.STAFF_MANAGE, P.PARTNER_VIEW, P.PROJECT_MANAGE, P.ANALYTICS_VIEW, P.EXPORT,
     P.RECRUITMENT_INTELLIGENCE_VIEW,
   ],
