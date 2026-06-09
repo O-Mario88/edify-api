@@ -21,6 +21,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { DebriefsModule } from './modules/debriefs/debriefs.module';
 import { SpecialProjectsModule } from './modules/special-projects/special-projects.module';
 import { BudgetModule } from './modules/budget/budget.module';
+import { CommandCenterModule } from './modules/command-center/command-center.module';
 import { SystemHealthModule } from './modules/system-health/system-health.module';
 import { HealthController } from './health.controller';
 
@@ -47,6 +48,7 @@ import { HealthController } from './health.controller';
     DebriefsModule,
     SpecialProjectsModule,
     BudgetModule,
+    CommandCenterModule,
     SystemHealthModule,
     // Roadmap modules (scaffolded next): users/staff, planning, evidence,
     // salesforce-verification, payments, annual-plan-budget, special-projects,
