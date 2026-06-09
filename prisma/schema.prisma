@@ -869,6 +869,10 @@ model CostSetting {
 
 model Project {
   id          String          @id @default(cuid())
+  // Stable business code (e.g. "SP-EDTECH") — the cross-surface identifier the
+  // School Directory / portfolio uses to assign schools. Lets the FE reference a
+  // project without knowing its cuid, so assignment writes hit the real backend.
+  code        String?         @unique
   name        String
   category    ProjectCategory
   intervention SsaIntervention?

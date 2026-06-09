@@ -26,17 +26,18 @@ export class SpecialProjectsController {
     return this.projects.getOne(id, user);
   }
 
-  // Assign a School-Directory school to a project. The ONLY write path —
-  // gated on PROJECT_MANAGE (CD / ProjectCoordinator / Admin) and validated
-  // against the Directory so no orphan/phantom assignments are possible.
+  // Assign a School-Directory school to a project. The ONLY write path — gated
+  // on ACTIVITY_ASSIGN (the planning-capable field roles: CCEO / PL / CD /
+  // ProjectCoordinator / Admin — not IA), matching who may assign from the
+  // Directory. Validated against the Directory so no orphan assignments exist.
   @Post(':id/schools')
-  @RequirePermissions(PERMISSIONS.PROJECT_MANAGE)
+  @RequirePermissions(PERMISSIONS.ACTIVITY_ASSIGN)
   assignSchool(@Param('id') id: string, @Body() body: { schoolId?: string }, @CurrentUser() user: AuthUser) {
     return this.projects.assignSchool(user, id, body?.schoolId ?? '');
   }
 
   @Delete(':id/schools/:schoolId')
-  @RequirePermissions(PERMISSIONS.PROJECT_MANAGE)
+  @RequirePermissions(PERMISSIONS.ACTIVITY_ASSIGN)
   removeSchool(@Param('id') id: string, @Param('schoolId') schoolId: string, @CurrentUser() user: AuthUser) {
     return this.projects.removeSchool(user, id, schoolId);
   }

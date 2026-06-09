@@ -312,31 +312,47 @@ async function seedDomains() {
   }
 
   // ── Special projects + assignments + activities + impact ──────────
-  if ((await prisma.project.count()) === 0) {
-    const PROJECTS: { name: string; category: ProjectCategory; intervention?: SsaIntervention }[] = [
-      { name: 'Literacy and Numeracy', category: 'intervention_specific', intervention: 'teaching_and_learning' },
-      { name: 'EdTech Pilot', category: 'pilot', intervention: 'education_technology' },
-      { name: 'Bible Project', category: 'selective_limited', intervention: 'exposure_to_word_of_god' },
-      { name: 'CC-SEL', category: 'intervention_specific', intervention: 'christlike_behaviour' },
+  // Canonical project portfolio — codes are the cross-surface business IDs the
+  // School Directory uses to assign schools (so FE assignment writes hit the
+  // backend). Idempotent: matched by code.
+  {
+    const PROJECTS: { code: string; name: string; category: ProjectCategory; intervention?: SsaIntervention }[] = [
+      { code: 'SP-EDTECH', name: 'Education Technology', category: 'pilot', intervention: 'education_technology' },
+      { code: 'SP-CCSEL', name: 'Christ-Centered SEL', category: 'selective_limited', intervention: 'christlike_behaviour' },
+      { code: 'SP-DIP', name: 'International Diploma in Christ-Centered Education', category: 'selective_limited', intervention: 'teaching_and_learning' },
+      { code: 'SP-ECC', name: 'Early Childhood Curriculum', category: 'intervention_specific', intervention: 'learning_environment' },
+      { code: 'SP-UCU', name: 'UCU Teacher Upgrading Programs', category: 'selective_limited', intervention: 'teaching_and_learning' },
     ];
+    // Re-home the 2 legacy projects that overlap (preserve their impact/partner
+    // seed under the canonical code) before upserting the rest.
+    await prisma.project.updateMany({ where: { name: 'EdTech Pilot', code: null }, data: { code: 'SP-EDTECH', name: 'Education Technology', category: 'pilot' } });
+    await prisma.project.updateMany({ where: { name: 'CC-SEL', code: null }, data: { code: 'SP-CCSEL', name: 'Christ-Centered SEL', category: 'selective_limited' } });
+    await prisma.project.updateMany({ where: { name: 'Literacy and Numeracy', code: null }, data: { code: 'SP-DIP', name: 'International Diploma in Christ-Centered Education', category: 'selective_limited', intervention: 'teaching_and_learning' } });
+    await prisma.project.updateMany({ where: { name: 'Bible Project', code: null }, data: { code: 'SP-ECC', name: 'Early Childhood Curriculum', category: 'intervention_specific', intervention: 'learning_environment' } });
+
     const schoolPool = await prisma.school.findMany({ where: { deletedAt: null }, select: { id: true, accountOwnerId: true }, take: 80 });
     let pi = 0;
     for (const p of PROJECTS) {
-      const project = await prisma.project.create({ data: { name: p.name, category: p.category, intervention: p.intervention } });
-      // assign 6 distinct schools per project (non-overlapping slices)
+      const project = await prisma.project.upsert({
+        where: { code: p.code },
+        create: { code: p.code, name: p.name, category: p.category, intervention: p.intervention },
+        update: { name: p.name, category: p.category, intervention: p.intervention },
+      });
+      // Seed schools/partner/activity/impact only the first time a project is created.
+      const already = await prisma.projectSchoolAssignment.count({ where: { projectId: project.id } });
       const slice = schoolPool.slice(pi * 6, pi * 6 + 6); pi++;
-      for (const s of slice) {
-        await prisma.projectSchoolAssignment.create({ data: { projectId: project.id, schoolId: s.id } });
-      }
-      // 1 partner per project
-      if (partnerIds.length) await prisma.projectPartnerAssignment.create({ data: { projectId: project.id, partnerId: partnerIds[pi % partnerIds.length] } });
-      // 2 project activities on the first assigned school
-      if (slice[0]) {
-        for (const at of ['project_activity'] as ActivityType[]) {
-          await prisma.activity.create({ data: { activityType: at, schoolId: slice[0].id, projectId: project.id, fy: '2026', quarter: 'Q2', responsibleStaffId: slice[0].accountOwnerId ?? undefined, deliveryType: 'partner', assignedPartnerId: partnerIds[0], status: 'scheduled', purposeIntervention: p.intervention } });
+      if (already === 0) {
+        for (const s of slice) {
+          await prisma.projectSchoolAssignment.create({ data: { projectId: project.id, schoolId: s.id } });
         }
+        if (partnerIds.length) await prisma.projectPartnerAssignment.create({ data: { projectId: project.id, partnerId: partnerIds[pi % partnerIds.length] } });
+        if (slice[0]) {
+          for (const at of ['project_activity'] as ActivityType[]) {
+            await prisma.activity.create({ data: { activityType: at, schoolId: slice[0].id, projectId: project.id, fy: '2026', quarter: 'Q2', responsibleStaffId: slice[0].accountOwnerId ?? undefined, deliveryType: 'partner', assignedPartnerId: partnerIds[0], status: 'scheduled', purposeIntervention: p.intervention } });
+          }
+        }
+        await prisma.projectImpactSnapshot.create({ data: { projectId: project.id, fy: '2026', metricsJson: { baselineAvg: 5.8, latestAvg: 7.1, change: 1.3, intervention: p.intervention } } });
       }
-      await prisma.projectImpactSnapshot.create({ data: { projectId: project.id, fy: '2026', metricsJson: { baselineAvg: 5.8, latestAvg: 7.1, change: 1.3, intervention: p.intervention } } });
     }
   }
 

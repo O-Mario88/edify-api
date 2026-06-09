@@ -32,6 +32,7 @@ export class SpecialProjectsService {
     });
     return projects.map((p) => ({
       id: p.id,
+      code: p.code,
       name: p.name,
       category: p.category,
       intervention: p.intervention,
@@ -68,7 +69,7 @@ export class SpecialProjectsService {
     }
 
     return {
-      id: p.id, name: p.name, category: p.category, intervention: p.intervention, managerStaffId: p.managerStaffId,
+      id: p.id, code: p.code, name: p.name, category: p.category, intervention: p.intervention, managerStaffId: p.managerStaffId,
       schools: p.schoolAssignments.map((a) => ({
         schoolId: a.school.schoolId, name: a.school.name, schoolType: a.school.schoolType,
         district: a.school.district?.name ?? null, ssaStatus: a.school.currentFySsaStatus,
@@ -82,8 +83,18 @@ export class SpecialProjectsService {
   // INVARIANT: special-project schools come ONLY from the School Directory.
   // `schoolId` here is the business School ID (e.g. "40118") the Directory uses;
   // we resolve it to a real School row and reject anything not in the Directory.
+  // Resolve a project by either its cuid or its business code (e.g. SP-EDTECH).
+  private async resolveProject(projectIdOrCode: string) {
+    const key = (projectIdOrCode ?? '').trim();
+    if (!key) return null;
+    return this.prisma.project.findFirst({
+      where: { deletedAt: null, OR: [{ id: key }, { code: key }] },
+      select: { id: true, name: true, code: true },
+    });
+  }
+
   async assignSchool(user: AuthUser, projectId: string, schoolBizId: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, deletedAt: null }, select: { id: true, name: true } });
+    const project = await this.resolveProject(projectId);
     if (!project) throw new NotFoundException('Project not found');
 
     const id = (schoolBizId ?? '').trim();
@@ -105,13 +116,15 @@ export class SpecialProjectsService {
   }
 
   async removeSchool(user: AuthUser, projectId: string, schoolBizId: string) {
+    const project = await this.resolveProject(projectId);
+    if (!project) throw new NotFoundException('Project not found');
     const school = await this.prisma.school.findFirst({ where: { schoolId: (schoolBizId ?? '').trim() }, select: { id: true, schoolId: true } });
     if (!school) throw new NotFoundException(`School ${schoolBizId} is not in the School Directory.`);
-    await this.prisma.projectSchoolAssignment.deleteMany({ where: { projectId, schoolId: school.id } });
+    await this.prisma.projectSchoolAssignment.deleteMany({ where: { projectId: project.id, schoolId: school.id } });
     await this.audit.log({
-      action: 'project.removeSchool', subjectKind: 'Project', subjectId: projectId,
+      action: 'project.removeSchool', subjectKind: 'Project', subjectId: project.id,
       actorId: user.userId, actorRole: user.activeRole, payload: { schoolId: school.schoolId },
     });
-    return { ok: true, projectId, schoolId: school.schoolId };
+    return { ok: true, projectId: project.id, schoolId: school.schoolId };
   }
 }
