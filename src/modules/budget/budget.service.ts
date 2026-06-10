@@ -198,6 +198,65 @@ export class BudgetService {
   }
 
   /**
+   * Per-activity cost breakdown for a period — the exact rows that make up a
+   * fund request total, each priced from the CD rate card (the cost catalogue).
+   * This is what an approver expands to verify the rule "every cost of an
+   * activity comes from the plan and the cost catalogue." fy + optional
+   * month/quarter narrow to the request's period.
+   */
+  async breakdown(user: AuthUser, opts: { fy?: string; month?: number; quarter?: string } = {}) {
+    const scope = await this.scope.resolveUserScope(user);
+    const fy = opts.fy || getOperationalFY();
+    const rates = await this.rateCard();
+    const q = opts.quarter?.toUpperCase();
+    const QMONTHS: Record<string, number[]> = { Q1: [7, 8, 9], Q2: [10, 11, 12], Q3: [1, 2, 3], Q4: [4, 5, 6] };
+
+    const activities = await this.prisma.activity.findMany({
+      where: { ...this.activityWhere(scope), fy },
+      select: {
+        id: true, activityType: true, deliveryType: true, status: true,
+        quarter: true, month: true, plannedMonth: true, scheduledDate: true,
+        teachersAttended: true, leadersAttended: true, otherParticipants: true,
+        school: { select: { name: true, schoolType: true } },
+        cluster: { select: { name: true } },
+      },
+    });
+
+    const rows = activities
+      .map((a) => ({ a, month: this.monthNumberOf(a) }))
+      .filter(({ month }) => {
+        if (opts.month != null) return month === opts.month;
+        if (q) return month != null && (QMONTHS[q]?.includes(month) ?? false);
+        return true;
+      })
+      .map(({ a, month }) => {
+        const cost = costForActivity(
+          {
+            activityType: a.activityType,
+            deliveryType: a.deliveryType,
+            teachersAttended: a.teachersAttended,
+            leadersAttended: a.leadersAttended,
+            otherParticipants: a.otherParticipants,
+          },
+          rates,
+        );
+        return {
+          id: a.id,
+          activityType: a.activityType,
+          deliveryType: a.deliveryType,
+          target: a.school?.name ?? a.cluster?.name ?? 'cluster',
+          month,
+          amount: cost.amount,
+          costMissing: cost.costMissing,
+          lines: cost.lines.map((l) => ({ label: l.label, qty: l.qty, unit: l.unit, amount: l.amount, missing: l.missing })),
+        };
+      })
+      .sort((x, y) => y.amount - x.amount);
+
+    return { fy, activities: rows, total: rows.reduce((s, r) => s + r.amount, 0), count: rows.length };
+  }
+
+  /**
    * Weekly fund request — the operational view for CCEO/PL. The activities
    * scheduled for a given ISO week, each line-item costed, with the total the
    * caller should request. Defaults to the current FY's upcoming scheduled work
