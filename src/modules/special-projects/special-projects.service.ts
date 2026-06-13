@@ -89,7 +89,7 @@ export class SpecialProjectsService {
     if (!key) return null;
     return this.prisma.project.findFirst({
       where: { deletedAt: null, OR: [{ id: key }, { code: key }] },
-      select: { id: true, name: true, code: true },
+      select: { id: true, name: true, code: true, intervention: true },
     });
   }
 
@@ -126,5 +126,93 @@ export class SpecialProjectsService {
       actorId: user.userId, actorRole: user.activeRole, payload: { schoolId: school.schoolId },
     });
     return { ok: true, projectId: project.id, schoolId: school.schoolId };
+  }
+
+  // ─── Impact: how the project is improving its target SSA intervention ───
+  // Per assigned school: baseline (first SSA) vs latest SSA on the project's
+  // intervention (or the SSA average when the project has no single target).
+  async impact(projectId: string) {
+    const project = await this.resolveProject(projectId);
+    if (!project) throw new NotFoundException('Project not found');
+    const intervention = project.intervention;
+    const assignments = await this.prisma.projectSchoolAssignment.findMany({
+      where: { projectId: project.id },
+      include: {
+        school: {
+          select: {
+            schoolId: true, name: true,
+            ssaRecords: { where: { deletedAt: null }, orderBy: { dateOfSsa: 'asc' }, include: { scores: true } },
+          },
+        },
+      },
+    });
+    type SsaRec = (typeof assignments)[number]['school']['ssaRecords'][number];
+    const scoreOf = (rec: SsaRec | undefined) => {
+      if (!rec) return null;
+      if (!intervention) return rec.averageScore ?? null;
+      return rec.scores.find((s) => s.intervention === intervention)?.score ?? null;
+    };
+    const schools = assignments.map((a) => {
+      const recs = a.school.ssaRecords;
+      const first = recs[0];
+      const last = recs[recs.length - 1];
+      const baseline = scoreOf(first);
+      const latest = scoreOf(last);
+      const delta = baseline != null && latest != null ? Math.round((latest - baseline) * 10) / 10 : null;
+      return { schoolId: a.school.schoolId, name: a.school.name, baseline, latest, delta, ssaCount: recs.length };
+    });
+    const measured = schools.filter((s) => s.delta != null) as { delta: number }[];
+    const improvedCount = measured.filter((s) => s.delta > 0).length;
+    const avgDelta = measured.length ? Math.round((measured.reduce((s, r) => s + r.delta, 0) / measured.length) * 10) / 10 : null;
+    return {
+      projectId: project.id, name: project.name, intervention,
+      schoolCount: schools.length, measuredCount: measured.length, improvedCount, avgDelta, schools,
+    };
+  }
+
+  // ─── Partner monitoring (assign / remove / activity progress) ───────
+  async assignPartner(user: AuthUser, projectId: string, partnerId: string) {
+    const project = await this.resolveProject(projectId);
+    if (!project) throw new NotFoundException('Project not found');
+    const partner = await this.prisma.partner.findUnique({ where: { id: partnerId }, select: { id: true, name: true } });
+    if (!partner) throw new NotFoundException('Partner not found');
+    const existing = await this.prisma.projectPartnerAssignment.findFirst({ where: { projectId: project.id, partnerId } });
+    const a = existing ?? (await this.prisma.projectPartnerAssignment.create({ data: { projectId: project.id, partnerId } }));
+    await this.audit.log({ action: 'project.assignPartner', subjectKind: 'Project', subjectId: project.id, actorId: user.userId, actorRole: user.activeRole, payload: { partnerId, partnerName: partner.name } });
+    return { ok: true, assignmentId: a.id, partnerId };
+  }
+
+  async removePartner(user: AuthUser, projectId: string, partnerId: string) {
+    const project = await this.resolveProject(projectId);
+    if (!project) throw new NotFoundException('Project not found');
+    await this.prisma.projectPartnerAssignment.deleteMany({ where: { projectId: project.id, partnerId } });
+    await this.audit.log({ action: 'project.removePartner', subjectKind: 'Project', subjectId: project.id, actorId: user.userId, actorRole: user.activeRole, payload: { partnerId } });
+    return { ok: true, projectId: project.id, partnerId };
+  }
+
+  /** Partners on a project + their delivery progress (project activities by partner). */
+  async partners(projectId: string) {
+    const project = await this.resolveProject(projectId);
+    if (!project) throw new NotFoundException('Project not found');
+    const assigned = await this.prisma.projectPartnerAssignment.findMany({
+      where: { projectId: project.id },
+      include: { partner: { select: { id: true, name: true, isCertified: true, certificationStatus: true } } },
+    });
+    const acts = await this.prisma.activity.findMany({
+      where: { projectId: project.id, assignedPartnerId: { not: null }, deletedAt: null },
+      select: { assignedPartnerId: true, status: true },
+    });
+    const byPartner = new Map<string, { total: number; completed: number }>();
+    for (const a of acts) {
+      const m = byPartner.get(a.assignedPartnerId as string) ?? { total: 0, completed: 0 };
+      m.total += 1;
+      if (['completed', 'paid', 'closed', 'verified'].includes(a.status)) m.completed += 1;
+      byPartner.set(a.assignedPartnerId as string, m);
+    }
+    return assigned.map((p) => ({
+      id: p.partner.id, name: p.partner.name, isCertified: p.partner.isCertified, certificationStatus: p.partner.certificationStatus,
+      activityTotal: byPartner.get(p.partner.id)?.total ?? 0,
+      activityCompleted: byPartner.get(p.partner.id)?.completed ?? 0,
+    }));
   }
 }

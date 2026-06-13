@@ -41,4 +41,28 @@ export class SpecialProjectsController {
   removeSchool(@Param('id') id: string, @Param('schoolId') schoolId: string, @CurrentUser() user: AuthUser) {
     return this.projects.removeSchool(user, id, schoolId);
   }
+
+  // Impact: how the project is improving its target SSA intervention.
+  @Get(':id/impact')
+  impact(@Param('id') id: string) {
+    return this.projects.impact(id);
+  }
+
+  // Partner monitoring (assign / remove / delivery progress).
+  @Get(':id/partners')
+  partners(@Param('id') id: string) {
+    return this.projects.partners(id);
+  }
+
+  @Post(':id/partners')
+  @RequirePermissions(PERMISSIONS.ACTIVITY_ASSIGN)
+  assignPartner(@Param('id') id: string, @Body() body: { partnerId?: string }, @CurrentUser() user: AuthUser) {
+    return this.projects.assignPartner(user, id, body?.partnerId ?? '');
+  }
+
+  @Delete(':id/partners/:partnerId')
+  @RequirePermissions(PERMISSIONS.ACTIVITY_ASSIGN)
+  removePartner(@Param('id') id: string, @Param('partnerId') partnerId: string, @CurrentUser() user: AuthUser) {
+    return this.projects.removePartner(user, id, partnerId);
+  }
 }
