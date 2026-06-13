@@ -201,4 +201,67 @@ export class FundRequestsService {
     });
     return updated;
   }
+
+  // ─── Disbursement (accountant) ──────────────────────────────────────
+  async disburse(user: AuthUser, id: string, body: { amount?: number; method?: string; reference?: string }) {
+    if (!permissionsForRole(user.activeRole).includes(PERMISSIONS.PAYMENT_ACT)) {
+      throw new ForbiddenException('Only the accountant (PAYMENT_ACT) can disburse.');
+    }
+    const fr = await this.prisma.fundRequest.findUnique({ where: { id } });
+    if (!fr) throw new NotFoundException('Fund request not found');
+    if (fr.status !== 'approved') throw new BadRequestException(`Only an approved request can be disbursed (is ${fr.status}).`);
+    const updated = await this.prisma.fundRequest.update({
+      where: { id },
+      data: {
+        status: 'disbursed',
+        disbursedAmount: body.amount ?? fr.totalAmount,
+        disbursedAt: new Date(),
+        disbursedByUserId: user.userId,
+        disburseMethod: body.method,
+        disburseReference: body.reference,
+        accountabilityStatus: 'none',
+      },
+    });
+    await this.audit.log({ action: 'fundRequest.disbursed', subjectKind: 'FundRequest', subjectId: id, actorId: user.userId, actorRole: user.activeRole, payload: { method: body.method ?? null, reference: body.reference ?? null } });
+    return updated;
+  }
+
+  // ─── Accountability (owner submits → supervisor approves/returns) ────
+  async submitAccountability(user: AuthUser, id: string, body: { netsuiteId?: string; amountSpent?: number; amountReturned?: number }) {
+    const fr = await this.prisma.fundRequest.findUnique({ where: { id } });
+    if (!fr) throw new NotFoundException('Fund request not found');
+    if (fr.submittedByUserId !== user.userId && user.activeRole !== 'Admin') {
+      throw new ForbiddenException('Only the requester accounts for their own funds.');
+    }
+    if (fr.status !== 'disbursed') throw new BadRequestException(`Accountability needs a disbursed request (is ${fr.status}).`);
+    const updated = await this.prisma.fundRequest.update({
+      where: { id },
+      data: {
+        accountabilityStatus: 'submitted',
+        accountedAmount: body.amountSpent,
+        returnedAmount: body.amountReturned,
+        accountabilityNetsuiteId: body.netsuiteId,
+        accountabilitySubmittedAt: new Date(),
+      },
+    });
+    await this.audit.log({ action: 'fundRequest.accountabilitySubmitted', subjectKind: 'FundRequest', subjectId: id, actorId: user.userId, actorRole: user.activeRole, payload: { netsuiteId: body.netsuiteId ?? null, amountSpent: body.amountSpent ?? null } });
+    return updated;
+  }
+
+  async reviewAccountability(user: AuthUser, id: string, action: 'approve' | 'return', note?: string) {
+    if (!permissionsForRole(user.activeRole).includes(PERMISSIONS.BUDGET_APPROVE)) {
+      throw new ForbiddenException('Only an approver (BUDGET_APPROVE) can review accountability.');
+    }
+    const fr = await this.prisma.fundRequest.findUnique({ where: { id } });
+    if (!fr) throw new NotFoundException('Fund request not found');
+    if (fr.accountabilityStatus !== 'submitted') throw new BadRequestException('No submitted accountability to review.');
+    // Status stays "disbursed" (no "closed" in the FundRequestStatus enum); the
+    // accountability sub-status carries the approve/return outcome.
+    const updated = await this.prisma.fundRequest.update({
+      where: { id },
+      data: { accountabilityStatus: action === 'approve' ? 'approved' : 'returned', accountabilityReviewedAt: new Date(), reviewNote: note },
+    });
+    await this.audit.log({ action: `fundRequest.accountability.${action}`, subjectKind: 'FundRequest', subjectId: id, actorId: user.userId, actorRole: user.activeRole, payload: { note: note ?? null } });
+    return updated;
+  }
 }

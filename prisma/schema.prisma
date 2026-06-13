@@ -1343,6 +1343,19 @@ model FundRequest {
   reviewedByUserId  String?
   reviewedAt        DateTime?
   reviewNote        String?
+  // Disbursement (accountant clears an APPROVED request → status disbursed).
+  disbursedAmount   Float?
+  disbursedAt       DateTime?
+  disbursedByUserId String?
+  disburseMethod    String? // MobileMoney | BankTransfer | Cash | Cheque
+  disburseReference String?
+  // Accountability (owner accounts for spend after disbursement).
+  accountedAmount       Float?
+  returnedAmount        Float?
+  accountabilityStatus  String? // none | submitted | approved | returned
+  accountabilityNetsuiteId String?
+  accountabilitySubmittedAt DateTime?
+  accountabilityReviewedAt  DateTime?
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 

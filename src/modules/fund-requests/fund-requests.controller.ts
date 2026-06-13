@@ -52,4 +52,30 @@ export class FundRequestsController {
   reject(@Param('id') id: string, @Body() body: { note?: string }, @CurrentUser() user: AuthUser) {
     return this.fundRequests.review(user, id, 'reject', body?.note);
   }
+
+  // Accountant clears an approved request → disbursed.
+  @Post(':id/disburse')
+  @RequirePermissions(PERMISSIONS.PAYMENT_ACT)
+  disburse(@Param('id') id: string, @Body() body: { amount?: number; method?: string; reference?: string }, @CurrentUser() user: AuthUser) {
+    return this.fundRequests.disburse(user, id, body ?? {});
+  }
+
+  // Requester accounts for spend after disbursement.
+  @Post(':id/account')
+  @RequirePermissions(PERMISSIONS.PLANNING_VIEW)
+  account(@Param('id') id: string, @Body() body: { netsuiteId?: string; amountSpent?: number; amountReturned?: number }, @CurrentUser() user: AuthUser) {
+    return this.fundRequests.submitAccountability(user, id, body ?? {});
+  }
+
+  @Post(':id/account-approve')
+  @RequirePermissions(PERMISSIONS.BUDGET_APPROVE)
+  accountApprove(@Param('id') id: string, @Body() body: { note?: string }, @CurrentUser() user: AuthUser) {
+    return this.fundRequests.reviewAccountability(user, id, 'approve', body?.note);
+  }
+
+  @Post(':id/account-return')
+  @RequirePermissions(PERMISSIONS.BUDGET_APPROVE)
+  accountReturn(@Param('id') id: string, @Body() body: { note?: string }, @CurrentUser() user: AuthUser) {
+    return this.fundRequests.reviewAccountability(user, id, 'return', body?.note);
+  }
 }
