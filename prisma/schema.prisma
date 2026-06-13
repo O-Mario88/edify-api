@@ -259,6 +259,7 @@ model User {
   auditLogs    AuditLog[]   @relation("AuditActor")
   notifications Notification[]
   sentMessages Message[]    @relation("MessageSender")
+  partner      Partner?
 }
 
 model Permission {
@@ -300,10 +301,46 @@ model StaffProfile {
   ownedSchools      School[]   @relation("SchoolAccountOwner")
   responsibleActivities Activity[] @relation("ActivityResponsible")
   monitoredActivities   Activity[] @relation("ActivityMonitor")
+  leaves            Leave[]
 
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   deletedAt       DateTime?
+}
+
+// HR — staff leave requests (annual / sick / compassionate / unpaid).
+model Leave {
+  id             String   @id @default(cuid())
+  staff          StaffProfile @relation(fields: [staffProfileId], references: [id])
+  staffProfileId String
+  type           String   // annual | sick | compassionate | unpaid
+  startDate      String   // ISO date
+  endDate        String
+  days           Int
+  status         String   @default("pending") // pending | approved | rejected
+  reason         String?
+  reviewedByUserId String?
+  reviewedAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([staffProfileId])
+  @@index([status])
+}
+
+// Saved reports — a generated, persisted summary computed from program data.
+model Report {
+  id              String   @id @default(cuid())
+  title           String
+  type            String   // program_summary | ssa_performance | activity_pipeline
+  fy              String
+  scope           String   @default("country")
+  createdByUserId String?
+  summaryJson     Json
+  createdAt       DateTime @default(now())
+
+  @@index([type])
+  @@index([fy])
 }
 
 model StaffSupervisorAssignment {
@@ -1082,6 +1119,10 @@ model Partner {
   certificationStatus String?  // certified | pending | expired | none
   expertiseAreas      String[]
   activeStatus        Boolean  @default(true)
+  // Backend login link — a partner field officer authenticates as this user, so
+  // their session sees only THIS partner's assigned activities (the round-trip).
+  userId    String?  @unique
+  user      User?    @relation(fields: [userId], references: [id])
   activities Activity[]
   projectAssignments ProjectPartnerAssignment[]
   createdAt DateTime @default(now())

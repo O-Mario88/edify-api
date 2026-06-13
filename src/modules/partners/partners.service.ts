@@ -73,6 +73,39 @@ export class PartnersService {
     return partners.map((p) => this.shape(p));
   }
 
+  /** The Partner organization the CALLER authenticates as (round-trip seam).
+   *  A partner field officer's session is scoped to this one record. */
+  async myPartner(user: AuthUser) {
+    const p = await this.prisma.partner.findFirst({ where: { deletedAt: null, userId: user.userId } });
+    if (!p) throw new NotFoundException('No partner organization is linked to this account.');
+    return this.shape(p);
+  }
+
+  /** Activities assigned TO the caller's partner — the work that round-trips
+   *  back from a staffer's "assign to partner" into the partner's own queue. */
+  async myActivities(user: AuthUser) {
+    const partner = await this.prisma.partner.findFirst({ where: { deletedAt: null, userId: user.userId } });
+    if (!partner) throw new NotFoundException('No partner organization is linked to this account.');
+    const rows = await this.prisma.activity.findMany({
+      where: { deletedAt: null, assignedPartnerId: partner.id },
+      orderBy: [{ scheduledDate: 'asc' }, { createdAt: 'desc' }], take: 500,
+      include: { school: { select: { name: true, district: { select: { name: true } } } } },
+    });
+    const activities = rows.map((a) => ({
+      id: a.id, activityType: a.activityType, schoolName: a.school?.name ?? null,
+      district: a.school?.district?.name ?? null, status: a.status, evidenceStatus: a.evidenceStatus,
+      scheduledDate: a.scheduledDate, fy: a.fy, deliveryType: a.deliveryType,
+    }));
+    const closed = ['completed', 'ia_verified', 'paid', 'closed', 'cancelled'];
+    const counts = {
+      total: activities.length,
+      open: activities.filter((a) => !closed.includes(a.status as string)).length,
+      awaitingEvidence: activities.filter((a) => a.evidenceStatus === 'none' || a.evidenceStatus === 'returned').length,
+      scheduled: activities.filter((a) => a.scheduledDate != null).length,
+    };
+    return { partner: this.shape(partner), counts, activities };
+  }
+
   /** Eligible partners for an assignment: ACTIVE + (covers the district OR no
    *  coverage set = nationwide) + (has the expertise, if a technical area is
    *  requested). Includes certification + current workload so staff can choose. */

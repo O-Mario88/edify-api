@@ -22,6 +22,20 @@ export class PartnersController {
     return this.partners.list(user, activeOnly === 'true');
   }
 
+  // The partner org the CALLER logs in as (round-trip: a field officer's session).
+  @Get('me')
+  @RequirePermissions(PERMISSIONS.PLANNING_VIEW)
+  me(@CurrentUser() user: AuthUser) {
+    return this.partners.myPartner(user);
+  }
+
+  // Activities assigned to the caller's partner — their own work queue.
+  @Get('me/activities')
+  @RequirePermissions(PERMISSIONS.PLANNING_VIEW)
+  myActivities(@CurrentUser() user: AuthUser) {
+    return this.partners.myActivities(user);
+  }
+
   // Eligible partners for an assignment (active + geography + expertise).
   @Get('eligible')
   @RequirePermissions(PERMISSIONS.PARTNER_VIEW)

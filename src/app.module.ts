@@ -26,6 +26,8 @@ import { EvidenceModule } from './modules/evidence/evidence.module';
 import { PartnersModule } from './modules/partners/partners.module';
 import { FundRequestsModule } from './modules/fund-requests/fund-requests.module';
 import { SystemHealthModule } from './modules/system-health/system-health.module';
+import { ReportsModule } from './modules/reports/reports.module';
+import { HrModule } from './modules/hr/hr.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -56,6 +58,8 @@ import { HealthController } from './health.controller';
     FundRequestsModule,
     PartnersModule,
     SystemHealthModule,
+    ReportsModule,
+    HrModule,
     // Roadmap modules (scaffolded next): users/staff, planning, evidence,
     // salesforce-verification, payments, annual-plan-budget, special-projects,
     // partners, messages, notifications, reports.
