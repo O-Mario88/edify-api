@@ -54,16 +54,49 @@ export class ClustersService {
     if (!scope.countryScope && !scope.canViewSummaryOnly && !scope.districtIds.includes(cluster.districtId)) throw new ForbiddenException('Cluster outside your scope');
     const schools = await this.prisma.school.findMany({
       where: { clusterId, deletedAt: null }, take: 500, // a cluster roster is small; bound anyway
-      include: { subCounty: { select: { name: true } }, accountOwner: { include: { user: { select: { name: true } } } }, ssaRecords: { where: { deletedAt: null }, orderBy: { dateOfSsa: 'desc' }, take: 1 } },
+      include: {
+        subCounty: { select: { name: true } },
+        accountOwner: { include: { user: { select: { name: true } } } },
+        ssaRecords: { where: { deletedAt: null }, orderBy: { dateOfSsa: 'desc' }, take: 1, include: { scores: true } },
+      },
       orderBy: { name: 'asc' },
     });
+
+    // Per-school weakest SSA intervention (lowest-scoring area on the latest SSA),
+    // plus a cluster-wide common weak intervention = the intervention with the
+    // lowest AVERAGE score across all schools (the area the whole cluster shares).
+    const clusterTotals = new Map<string, { sum: number; n: number }>();
+    const weakestOf = (scores: { intervention: string; score: number }[]): { area: string; score: number } | null => {
+      if (!scores.length) return null;
+      const w = scores.reduce((a, b) => (b.score < a.score ? b : a));
+      return { area: w.intervention, score: w.score };
+    };
+    for (const s of schools) {
+      for (const sc of s.ssaRecords[0]?.scores ?? []) {
+        const t = clusterTotals.get(sc.intervention) ?? { sum: 0, n: 0 };
+        t.sum += sc.score; t.n += 1; clusterTotals.set(sc.intervention, t);
+      }
+    }
+    let commonWeakIntervention: { area: string; avgScore: number } | null = null;
+    for (const [area, t] of clusterTotals) {
+      const avg = t.sum / t.n;
+      if (!commonWeakIntervention || avg < commonWeakIntervention.avgScore) {
+        commonWeakIntervention = { area, avgScore: Math.round(avg * 10) / 10 };
+      }
+    }
+
     return {
       cluster: { id: cluster.id, name: cluster.name, status: cluster.status, type: cluster.clusterType },
       count: schools.length,
+      commonWeakIntervention,
       schools: schools.map((s) => ({
         schoolId: s.schoolId, name: s.name, schoolType: s.schoolType, subCounty: s.subCounty?.name,
+        phone: s.schoolPhone ?? s.primaryContactPhone ?? null,
+        primaryContact: s.primaryContactName ?? null,
         accountOwner: s.accountOwner?.user.name, ssaStatus: s.currentFySsaStatus, planningReadiness: s.planningReadiness,
-        latestSsa: s.ssaRecords[0]?.averageScore ?? null, stage: this.readiness.stageFor(s),
+        latestSsa: s.ssaRecords[0]?.averageScore ?? null,
+        weakestIntervention: weakestOf(s.ssaRecords[0]?.scores ?? []),
+        stage: this.readiness.stageFor(s),
       })),
     };
   }
