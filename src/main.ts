@@ -16,8 +16,13 @@ async function bootstrap() {
   const origins = (config.get<string>('CORS_ORIGINS') ?? '').split(',').map((o) => o.trim()).filter(Boolean);
   app.enableCors({ origin: origins.length ? origins : config.get('NODE_ENV') !== 'production', credentials: true });
   app.setGlobalPrefix('api');
+  // whitelist:true STRIPS properties not declared on the DTO. We intentionally
+  // do NOT set forbidNonWhitelisted — the frontend sends best-effort bodies and
+  // an extra/renamed field must be silently dropped, NOT rejected with a 400.
+  // (forbidNonWhitelisted:true was the recurring "property X should not exist"
+  // 400 — e.g. weekOfMonth. Business-rule 400s thrown in services are unaffected.)
   app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }),
+    new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: false }),
   );
 
   if (config.get<string>('NODE_ENV') !== 'production') {
