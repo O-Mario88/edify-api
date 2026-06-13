@@ -843,6 +843,52 @@ model AnnualPlan {
   @@unique([fy, ownerStaffId])
 }
 
+// Monthly plan — the CCEO's plan-as-list for one operational month. Separate
+// from AnnualPlan (which is FY-level). Activities are plan-scoped drafts; the
+// plan carries the approval-workflow status.
+model MonthlyPlan {
+  id             String   @id @default(cuid())
+  monthIso       String   // "2026-05"
+  ownerStaffId   String
+  ownerName      String?
+  countryId      String   @default("Uganda")
+  // draft | submitted | approved | returned | active | closed
+  status         String   @default("draft")
+  submittedAt    DateTime?
+  approvedAt     DateTime?
+  approvedById   String?
+  returnedReason String?
+  totalCostCents Int      @default(0)
+  activities     MonthlyPlanActivity[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([monthIso, ownerStaffId])
+  @@index([status])
+  @@index([ownerStaffId])
+}
+
+model MonthlyPlanActivity {
+  id               String   @id @default(cuid())
+  plan             MonthlyPlan @relation(fields: [monthlyPlanId], references: [id], onDelete: Cascade)
+  monthlyPlanId    String
+  kind             String
+  title            String
+  weekOfMonth      Int      @default(1)
+  scheduledDate    String?
+  schoolId         String?
+  assigneeId       String?
+  estCostCents     Int      @default(0)
+  status           String   @default("Planned")
+  interventionArea String?
+  deliveryType     String?
+  partnerName      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([monthlyPlanId])
+}
+
 model AnnualPlanActivity {
   id           String   @id @default(cuid())
   annualPlan   AnnualPlan @relation(fields: [annualPlanId], references: [id])

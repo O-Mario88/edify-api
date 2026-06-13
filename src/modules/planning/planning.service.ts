@@ -1,9 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, School } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ScopeService } from '../../common/scope/scope.service';
 import { ReadinessService } from '../../common/readiness/readiness.service';
 import { AuthUser } from '../../common/auth/auth-user';
+import { CreatePlanDto, DraftActivityDto } from './dto/plans.dto';
+
+const APPROVER_ROLES = new Set(['CountryProgramLead', 'CountryDirector', 'Admin']);
 
 type Filters = { regionId?: string; districtId?: string; subCountyId?: string; fy?: string };
 
@@ -130,5 +133,98 @@ export class PlanningService {
       if (!s) throw new Error('not found');
       return this.readiness.recompute(s.id);
     });
+  }
+
+  // ─── Monthly plan lifecycle (plan-as-list: create → submit → approve) ───
+
+  private actData(a: DraftActivityDto) {
+    return {
+      kind: a.kind, title: a.title, weekOfMonth: a.weekOfMonth ?? 1,
+      scheduledDate: a.scheduledDate, schoolId: a.schoolId, estCostCents: a.estCostCents ?? 0,
+      interventionArea: a.interventionArea, deliveryType: a.deliveryType, partnerName: a.partnerName,
+    };
+  }
+
+  private async recomputePlanTotal(planId: string) {
+    const rows = await this.prisma.monthlyPlanActivity.findMany({ where: { monthlyPlanId: planId }, select: { estCostCents: true } });
+    const total = rows.reduce((s, r) => s + r.estCostCents, 0);
+    await this.prisma.monthlyPlan.update({ where: { id: planId }, data: { totalCostCents: total } });
+  }
+
+  /** Create (or return the existing) draft plan for the caller's month, with any seed activities. */
+  async createPlan(user: AuthUser, dto: CreatePlanDto) {
+    const ownerStaffId = user.staffProfileId;
+    if (!ownerStaffId) throw new BadRequestException('No staff profile for this user.');
+    const acts = dto.activities ?? [];
+    const total = acts.reduce((s, a) => s + (a.estCostCents ?? 0), 0);
+    const plan = await this.prisma.monthlyPlan.upsert({
+      where: { monthIso_ownerStaffId: { monthIso: dto.monthIso, ownerStaffId } },
+      update: acts.length ? { totalCostCents: { increment: total }, activities: { create: acts.map((a) => this.actData(a)) } } : {},
+      create: {
+        monthIso: dto.monthIso, ownerStaffId, ownerName: user.name, status: 'draft', totalCostCents: total,
+        activities: { create: acts.map((a) => this.actData(a)) },
+      },
+      include: { activities: true },
+    });
+    return plan;
+  }
+
+  private async ownedPlanOr403(user: AuthUser, planId: string) {
+    const plan = await this.prisma.monthlyPlan.findUnique({ where: { id: planId } });
+    if (!plan) throw new NotFoundException('Plan not found');
+    if (plan.ownerStaffId !== user.staffProfileId && user.activeRole !== 'Admin') throw new ForbiddenException('Not your plan');
+    return plan;
+  }
+
+  async addActivity(user: AuthUser, planId: string, a: DraftActivityDto) {
+    await this.ownedPlanOr403(user, planId);
+    const act = await this.prisma.monthlyPlanActivity.create({ data: { monthlyPlanId: planId, ...this.actData(a) } });
+    await this.recomputePlanTotal(planId);
+    return act;
+  }
+
+  async submitPlan(user: AuthUser, planId: string) {
+    await this.ownedPlanOr403(user, planId);
+    return this.prisma.monthlyPlan.update({ where: { id: planId }, data: { status: 'submitted', submittedAt: new Date(), returnedReason: null } });
+  }
+
+  async approvePlan(user: AuthUser, planId: string) {
+    if (!APPROVER_ROLES.has(user.activeRole)) throw new ForbiddenException('Only a Program Lead / CD can approve.');
+    const plan = await this.prisma.monthlyPlan.findUnique({ where: { id: planId } });
+    if (!plan) throw new NotFoundException('Plan not found');
+    return this.prisma.monthlyPlan.update({ where: { id: planId }, data: { status: 'approved', approvedAt: new Date(), approvedById: user.userId } });
+  }
+
+  async returnPlan(user: AuthUser, planId: string, reason: string) {
+    if (!APPROVER_ROLES.has(user.activeRole)) throw new ForbiddenException('Only a Program Lead / CD can return.');
+    const plan = await this.prisma.monthlyPlan.findUnique({ where: { id: planId } });
+    if (!plan) throw new NotFoundException('Plan not found');
+    return this.prisma.monthlyPlan.update({ where: { id: planId }, data: { status: 'returned', returnedReason: reason } });
+  }
+
+  /** Own plans (everyone) + the approval queue (approvers see all submitted/approved). */
+  async listPlans(user: AuthUser) {
+    const isApprover = APPROVER_ROLES.has(user.activeRole);
+    const where: Prisma.MonthlyPlanWhereInput = isApprover
+      ? { OR: [{ ownerStaffId: user.staffProfileId ?? '__none__' }, { status: { in: ['submitted', 'approved', 'returned', 'active'] } }] }
+      : { ownerStaffId: user.staffProfileId ?? '__none__' };
+    const plans = await this.prisma.monthlyPlan.findMany({
+      where, orderBy: { updatedAt: 'desc' }, take: 200,
+      include: { _count: { select: { activities: true } } },
+    });
+    return plans.map((p) => ({
+      id: p.id, monthIso: p.monthIso, ownerStaffId: p.ownerStaffId, ownerName: p.ownerName,
+      status: p.status, totalCostCents: p.totalCostCents, activityCount: p._count.activities,
+      submittedAt: p.submittedAt, approvedAt: p.approvedAt, returnedReason: p.returnedReason,
+      updatedAt: p.updatedAt,
+    }));
+  }
+
+  async getPlan(user: AuthUser, planId: string) {
+    const plan = await this.prisma.monthlyPlan.findUnique({ where: { id: planId }, include: { activities: { orderBy: { weekOfMonth: 'asc' } } } });
+    if (!plan) throw new NotFoundException('Plan not found');
+    const isApprover = APPROVER_ROLES.has(user.activeRole);
+    if (plan.ownerStaffId !== user.staffProfileId && !isApprover) throw new ForbiddenException('Not visible to you');
+    return plan;
   }
 }
