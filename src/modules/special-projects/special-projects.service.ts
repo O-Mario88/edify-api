@@ -48,7 +48,7 @@ export class SpecialProjectsService {
   async getOne(id: string, user: AuthUser) {
     const scope = await this.scope.resolveUserScope(user);
     const p = await this.prisma.project.findFirst({
-      where: { id, deletedAt: null },
+      where: { deletedAt: null, OR: [{ id }, { code: id }] },
       include: {
         schoolAssignments: {
           include: { school: { select: { schoolId: true, name: true, schoolType: true, currentFySsaStatus: true, district: { select: { name: true } } } } },
