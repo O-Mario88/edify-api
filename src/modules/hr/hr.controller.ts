@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { HrService } from './hr.service';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
@@ -21,6 +21,12 @@ export class HrController {
   @Get('leave')
   leave(@CurrentUser() user: AuthUser) {
     return this.hr.listLeave(user);
+  }
+
+  // Approved leave shaped for the calendar + planning-availability engine.
+  @Get('leave/calendar')
+  leaveCalendar(@Query('from') from: string, @Query('to') to: string, @CurrentUser() user: AuthUser) {
+    return this.hr.approvedLeaveCalendar(user, from, to);
   }
 
   @Post('leave')

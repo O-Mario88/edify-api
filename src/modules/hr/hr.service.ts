@@ -4,6 +4,18 @@ import { AuthUser } from '../../common/auth/auth-user';
 
 const HR_ROLES = new Set(['HumanResources', 'CountryDirector', 'Admin']);
 
+/** Inclusive list of ISO yyyy-mm-dd dates between start and end (capped at 60). */
+function expandDates(start: string, end: string): string[] {
+  const s = new Date(`${start}T00:00:00Z`);
+  const e = new Date(`${end}T00:00:00Z`);
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime()) || e < s) return [];
+  const out: string[] = [];
+  for (let d = new Date(s), i = 0; d <= e && i < 60; d.setUTCDate(d.getUTCDate() + 1), i++) {
+    out.push(d.toISOString().slice(0, 10));
+  }
+  return out;
+}
+
 // HR — the staff roster (derived from StaffProfile + assignments) and the leave
 // request workflow (request → HR approves/rejects).
 @Injectable()
@@ -58,6 +70,30 @@ export class HrService {
         startDate: body.startDate, endDate: body.endDate, days: body.days ?? 1, reason: body.reason, status: 'pending',
       },
     });
+  }
+
+  /** Approved leave shaped for the calendar / planning-availability engine.
+   *  Each entry carries the inclusive day list so the calendar can render it
+   *  and the planner can block those days. Scoped like listLeave (HR/CD see
+   *  the team, a staffer sees their own). */
+  async approvedLeaveCalendar(user: AuthUser, from?: string, to?: string) {
+    const isHr = HR_ROLES.has(user.activeRole);
+    const where = {
+      status: 'approved' as const,
+      ...(isHr ? {} : { staffProfileId: user.staffProfileId ?? '__none__' }),
+    };
+    const rows = await this.prisma.leave.findMany({
+      where, orderBy: { startDate: 'asc' }, take: 500,
+      include: { staff: { include: { user: { select: { name: true } } } } },
+    });
+    return rows
+      .map((l) => ({
+        id: l.id, staffName: l.staff.user.name, staffProfileId: l.staffProfileId,
+        type: l.type, startDate: l.startDate, endDate: l.endDate,
+        dates: expandDates(l.startDate, l.endDate),
+      }))
+      .filter((l) => l.dates.length > 0)
+      .filter((l) => !from || !to || l.dates.some((d) => d >= from && d <= to));
   }
 
   async reviewLeave(user: AuthUser, id: string, action: 'approve' | 'reject') {
