@@ -39,12 +39,30 @@ export class PlanningService {
   /** The planning setup buckets (§13/§15) — each consumes cluster + SSA status. */
   async setup(user: AuthUser, f: Filters, sample = 8) {
     const base = await this.baseWhere(user, f);
+    // A school leaves the "ready to plan" gap once it has an ACTIVE activity
+    // (planned through accountant-confirmed) — it now lives on the owner's My
+    // Plan, not the planning gap board. Terminal/returned states don't count.
+    const NO_ACTIVE_PLAN: Prisma.SchoolWhereInput = {
+      activities: {
+        none: {
+          deletedAt: null,
+          status: {
+            in: [
+              'planned', 'scheduled', 'assigned_to_partner', 'partner_scheduled',
+              'in_progress', 'evidence_uploaded', 'evidence_accepted',
+              'salesforce_id_required', 'awaiting_ia_verification', 'ia_verified',
+              'accountant_confirmed',
+            ] as never,
+          },
+        },
+      },
+    };
     const buckets: { key: string; label: string; where: Prisma.SchoolWhereInput }[] = [
       { key: 'notYetClustered', label: 'Not Yet Clustered', where: { ...base, clusterStatus: { in: ['unclustered', 'needs_review'] } } },
       { key: 'clusteredSsaRequired', label: 'Clustered Schools Missing SSA', where: { ...base, clusterStatus: 'clustered', currentFySsaStatus: { in: ['not_done', 'partner_assigned'] } } },
       { key: 'sitScheduledSsaMissing', label: 'SIT Scheduled, SSA Missing', where: { ...base, clusterStatus: 'clustered', currentFySsaStatus: 'scheduled' } },
-      { key: 'readyToPlan', label: 'SSA Complete, Ready to Plan', where: { ...base, clusterStatus: 'clustered', currentFySsaStatus: 'done', schoolType: { not: 'core' } } },
-      { key: 'coreSchoolPlanning', label: 'Core School Planning', where: { ...base, clusterStatus: 'clustered', currentFySsaStatus: 'done', schoolType: 'core' } },
+      { key: 'readyToPlan', label: 'SSA Complete, Ready to Plan', where: { ...base, ...NO_ACTIVE_PLAN, clusterStatus: 'clustered', currentFySsaStatus: 'done', schoolType: { not: 'core' } } },
+      { key: 'coreSchoolPlanning', label: 'Core School Planning', where: { ...base, ...NO_ACTIVE_PLAN, clusterStatus: 'clustered', currentFySsaStatus: 'done', schoolType: 'core' } },
     ];
     const include = { subCounty: { select: { name: true } }, accountOwner: { include: { user: { select: { name: true } } } } } as const;
     return Promise.all(buckets.map(async (b) => {
