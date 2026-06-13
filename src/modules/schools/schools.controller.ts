@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { SchoolsService } from './schools.service';
 import { ClustersService } from '../clusters/clusters.service';
 import { SchoolClusterBodyDto } from '../clusters/dto/cluster.dto';
-import { CreateSchoolDto } from './dto/create-school.dto';
+import { CreateSchoolDto, SetSchoolTypeDto } from './dto/create-school.dto';
 import { BulkUploadDto } from './dto/bulk-upload.dto';
 import { QuerySchoolsDto } from './dto/query-schools.dto';
 import { ResolveDuplicateDto } from './dto/resolve-duplicate.dto';
@@ -39,6 +39,14 @@ export class SchoolsController {
   @RequirePermissions(PERMISSIONS.SCHOOL_DIRECTORY_VIEW)
   list(@Query() query: QuerySchoolsDto, @CurrentUser() user: AuthUser) {
     return this.schools.list(query, user);
+  }
+
+  // Best-SSA client schools → potential Core; best-SSA core → potential Champion.
+  // MUST be declared before GET :schoolId so "proposals" isn't read as an id.
+  @Get('proposals')
+  @RequirePermissions(PERMISSIONS.SCHOOL_VIEW)
+  proposals(@CurrentUser() user: AuthUser) {
+    return this.schools.proposals(user);
   }
 
   @Get(':schoolId')
@@ -77,5 +85,12 @@ export class SchoolsController {
   @RequirePermissions(PERMISSIONS.SCHOOL_RESOLVE_DUPLICATE)
   resolveDuplicate(@Param('id') id: string, @Body() dto: ResolveDuplicateDto, @CurrentUser() user: AuthUser) {
     return this.schools.resolveDuplicate(id, dto.resolution, user);
+  }
+
+  // Change a school's type (Client → Core → Champion). Service enforces the role.
+  @Post(':schoolId/type')
+  @RequirePermissions(PERMISSIONS.SCHOOL_VIEW)
+  setType(@Param('schoolId') schoolId: string, @Body() dto: SetSchoolTypeDto, @CurrentUser() user: AuthUser) {
+    return this.schools.setType(user, schoolId, dto.schoolType);
   }
 }

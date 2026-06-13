@@ -38,6 +38,8 @@ enum SchoolType {
   client
   core
   potential_core
+  champion
+  potential_champion
   other
 }
 
@@ -887,6 +889,57 @@ model MonthlyPlanActivity {
   updatedAt        DateTime @updatedAt
 
   @@index([monthlyPlanId])
+}
+
+// Core-school plan — one per onboarded core school (4 visits + 4 trainings).
+// Deterministic id "cplan-{schoolId}" so the FE core-store and the backend
+// share ids (no mapping drift).
+model CorePlan {
+  id                 String   @id // "cplan-{schoolId}"
+  schoolId           String   @unique // operational schoolId
+  fy                 String
+  status             String   @default("Active")
+  visitsTarget       Int      @default(4)
+  trainingsTarget    Int      @default(4)
+  visitsCompleted    Int      @default(0)
+  trainingsCompleted Int      @default(0)
+  baselineAverage    Float?
+  followUpAverage    Float?
+  interventions      Json?    // [{ area, rank, baselineScore }]
+  createdById        String?
+  createdByName      String?
+  slots              CoreActivitySlot[]
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([status])
+}
+
+// The 8 core slots (4 visit + 4 training). Deterministic id
+// "cslot-{schoolId}-{v|t}{seq}" to match the FE core-store.
+model CoreActivitySlot {
+  id                  String   @id // "cslot-{schoolId}-v1"
+  corePlan            CorePlan @relation(fields: [corePlanId], references: [id], onDelete: Cascade)
+  corePlanId          String
+  schoolId            String
+  intervention        String
+  activityType        String   // "visit" | "training"
+  sequenceNumber      Int
+  status              String   @default("Planned")
+  owner               String   @default("unassigned") // unassigned|myself|staff|partner
+  assignedStaffId     String?
+  assignedStaffName   String?
+  assignedPartnerId   String?
+  assignedPartnerName String?
+  scheduledMonth      String?
+  scheduledWeek       Int?
+  salesforceId        String?
+  completedAt         DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([corePlanId])
+  @@index([schoolId])
 }
 
 model AnnualPlanActivity {

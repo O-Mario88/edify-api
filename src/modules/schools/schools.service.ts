@@ -1,5 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { AccountOwnerStatus, DuplicateStatus, Prisma, School } from '@prisma/client';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { AccountOwnerStatus, DuplicateStatus, Prisma, School, SchoolType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { ScopeService, UserScope } from '../../common/scope/scope.service';
@@ -41,6 +41,7 @@ export class SchoolsService {
         primaryContactName: dto.primaryContactName,
         primaryContactPhone: dto.primaryContactPhone,
         enrollment: dto.enrollment,
+        schoolType: dto.schoolType ?? 'client',
         accountOwnerNameRaw: dto.accountOwnerName,
         accountOwnerId: ownerId,
         accountOwnerStatus: ownerStatus,
@@ -412,5 +413,48 @@ export class SchoolsService {
         if (!p || p.subCountyId !== subCountyId) throw new BadRequestException('parish does not belong to sub-county');
       }
     }
+  }
+
+  // ── School type lifecycle (Client → Core → Champion) ────────────────
+
+  private static readonly TYPE_ROLES = new Set(['ImpactAssessment', 'CountryDirector', 'CountryProgramLead', 'Admin', 'CCEO']);
+
+  /** Change a school's type. Promoting to `core` moves it onto the Core dashboard
+   *  and increases the core count; `champion` marks a graduated core school. */
+  async setType(user: AuthUser, schoolId: string, schoolType: SchoolType) {
+    if (!SchoolsService.TYPE_ROLES.has(user.activeRole)) {
+      throw new ForbiddenException('Your role cannot change a school type.');
+    }
+    const school = await this.prisma.school.findUnique({ where: { schoolId } });
+    if (!school) throw new NotFoundException('School not found');
+    const updated = await this.prisma.school.update({ where: { schoolId }, data: { schoolType } });
+    await this.audit.log({
+      action: 'school.typeChanged', subjectKind: 'School', subjectId: school.id,
+      actorId: user.userId, actorRole: user.activeRole, payload: { from: school.schoolType, to: schoolType },
+    });
+    return { schoolId: updated.schoolId, name: updated.name, schoolType: updated.schoolType };
+  }
+
+  /** Proposals: best-SSA client schools → potential Core; best-SSA core schools
+   *  → potential Champion. Ranked by latest SSA average, role-scoped. */
+  async proposals(user: AuthUser, limit = 10) {
+    const scope = await this.scope.resolveUserScope(user);
+    const base: Prisma.SchoolWhereInput = { deletedAt: null, ...this.scope.schoolWhere(scope) };
+    const rank = async (schoolType: SchoolType) => {
+      const rows = await this.prisma.school.findMany({
+        where: { ...base, schoolType, ssaRecords: { some: { deletedAt: null } } },
+        include: {
+          ssaRecords: { where: { deletedAt: null }, orderBy: { dateOfSsa: 'desc' }, take: 1 },
+          district: { select: { name: true } },
+        },
+        take: 400,
+      });
+      return rows
+        .map((s) => ({ schoolId: s.schoolId, name: s.name, district: s.district?.name ?? null, schoolType: s.schoolType, latestSsa: s.ssaRecords[0]?.averageScore ?? null }))
+        .filter((s) => s.latestSsa != null)
+        .sort((a, b) => (b.latestSsa as number) - (a.latestSsa as number))
+        .slice(0, limit);
+    };
+    return { potentialCore: await rank('client'), potentialChampion: await rank('core') };
   }
 }
