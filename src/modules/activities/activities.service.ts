@@ -50,9 +50,15 @@ export class ActivitiesService {
   async list(query: QueryActivitiesDto, user: AuthUser) {
     const schoolIds = await this.scopedSchoolIds(user);
     const where: Prisma.ActivityWhereInput = { deletedAt: null };
-    if (schoolIds) where.schoolId = { in: schoolIds.length ? schoolIds : ['__none__'] };
-    // My Plan: only the caller's own activities.
-    if (query.mine === 'true' && user.staffProfileId) where.responsibleStaffId = user.staffProfileId;
+    // My Plan: the caller's own activities — scope by responsibleStaffId only.
+    // This MUST NOT also filter by schoolId, or cluster activities (schoolId is
+    // null) would be dropped from My Plan. A user's own activity is in scope by
+    // definition. The general (not-mine) list still scopes by school portfolio.
+    if (query.mine === 'true' && user.staffProfileId) {
+      where.responsibleStaffId = user.staffProfileId;
+    } else if (schoolIds) {
+      where.schoolId = { in: schoolIds.length ? schoolIds : ['__none__'] };
+    }
     if (query.status) where.status = query.status as Prisma.ActivityWhereInput['status'];
     else if (query.statusGroup === 'active') where.status = { in: ACTIVE_STATUSES as never };
     else if (query.statusGroup === 'completed') where.status = { in: COMPLETED_STATUSES as never };

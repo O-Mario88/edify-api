@@ -83,7 +83,11 @@ export const ROLE_PERMISSIONS: Record<EdifyRole, PermissionKey[]> = {
     P.RECRUITMENT_INTELLIGENCE_VIEW,
   ],
   CCEO: [
-    P.SCHOOL_VIEW, P.SCHOOL_DIRECTORY_VIEW, P.CLUSTER_VIEW, P.SSA_VIEW, P.PLANNING_VIEW, P.PLANNING_CREATE,
+    // The CCEO is the primary cluster-assigning field role: they run the
+    // assignment drawer after upload, slotting their portfolio schools into a
+    // cluster (per the spec). Not CLUSTER_OVERRIDE — only CD/IA may stand up a
+    // 2nd cluster in a sub-county.
+    P.SCHOOL_VIEW, P.SCHOOL_DIRECTORY_VIEW, P.CLUSTER_VIEW, P.CLUSTER_ASSIGN, P.SSA_VIEW, P.PLANNING_VIEW, P.PLANNING_CREATE,
     P.ACTIVITY_ASSIGN, P.ACTIVITY_COMPLETE, P.EVIDENCE_REVIEW, P.PARTNER_VIEW,
     // CCEO approves the fund requests of the staff they supervise, then submits
     // their own consolidated monthly request up to the PL.

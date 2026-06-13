@@ -22,10 +22,28 @@ export class ClustersService {
     const scope = await this.scope.resolveUserScope(user);
     const where: Prisma.ClusterWhereInput = { deletedAt: null };
     if (!scope.countryScope && !scope.canViewSummaryOnly) where.districtId = { in: scope.districtIds.length ? scope.districtIds : ['__none__'] };
-    return this.prisma.cluster.findMany({
+    const rows = await this.prisma.cluster.findMany({
       where, orderBy: { name: 'asc' }, take: 1000, // safety bound on payload
-      include: { district: { select: { name: true } }, subCounty: { select: { name: true } }, _count: { select: { schools: true } } },
+      include: {
+        district: { select: { name: true } },
+        subCounty: { select: { name: true } },
+        coveredSubCounties: { include: { subCounty: { select: { id: true, name: true } } } },
+        schools: { where: { deletedAt: null }, select: { currentFySsaStatus: true } },
+        _count: { select: { schools: true } },
+      },
     });
+    return rows.map((c) => ({
+      id: c.id, name: c.name, clusterType: c.clusterType, status: c.status,
+      district: c.district ? { name: c.district.name } : null,
+      subCounty: c.subCounty ? { name: c.subCounty.name } : null,
+      subCountyName: c.subCountyName, responsibleStaffId: c.responsibleStaffId,
+      clusterLeaderName: c.clusterLeaderName, clusterLeaderPhone: c.clusterLeaderPhone,
+      subCounties: c.coveredSubCounties.map((x) => x.subCounty.name),
+      subCountyIds: c.coveredSubCounties.map((x) => x.subCountyId),
+      schoolCount: c._count.schools,
+      schoolsWithSsa: c.schools.filter((s) => s.currentFySsaStatus === 'done').length,
+      _count: c._count,
+    }));
   }
 
   /** The cluster's school roster (§12). */
@@ -137,68 +155,124 @@ export class ClustersService {
     });
   }
 
-  /** Recommendations: same sub-county → same district (→ region needs override). */
+  // Shared include so cluster recommendations / eligibility carry the covered
+  // sub-county set + leader contact the directory drawer needs.
+  private readonly clusterCardInclude = {
+    district: { select: { name: true } },
+    subCounty: { select: { name: true } },
+    coveredSubCounties: { include: { subCounty: { select: { name: true } } } },
+    _count: { select: { schools: true } },
+  } as const;
+
+  /** Eligibility: same sub-county (cluster COVERS it) → same district (→ region
+   *  needs override). A cluster is "same sub-county" iff the school's sub-county
+   *  is in its covered set. */
   async recommendations(schoolId: string, user: AuthUser) {
     const scope = await this.scope.resolveUserScope(user);
     const school = await this.prisma.school.findFirst({ where: { schoolId, deletedAt: null, ...this.scope.schoolWhere(scope) }, include: { subCounty: true } });
     if (!school) throw new NotFoundException('School not found or outside scope');
     const base = { deletedAt: null, status: 'active' as const };
-    const [sameSub, sameDistrict] = await Promise.all([
-      school.subCountyId ? this.prisma.cluster.findMany({ where: { ...base, subCountyId: school.subCountyId }, include: { _count: { select: { schools: true } } } }) : Promise.resolve([]),
-      this.prisma.cluster.findMany({ where: { ...base, districtId: school.districtId }, include: { subCounty: { select: { name: true } }, _count: { select: { schools: true } } } }),
+    const [sameSubRaw, sameDistrictRaw] = await Promise.all([
+      school.subCountyId
+        ? this.prisma.cluster.findMany({
+            where: { ...base, OR: [{ subCountyId: school.subCountyId }, { coveredSubCounties: { some: { subCountyId: school.subCountyId } } }] },
+            include: this.clusterCardInclude,
+          })
+        : Promise.resolve([]),
+      this.prisma.cluster.findMany({ where: { ...base, districtId: school.districtId }, include: this.clusterCardInclude }),
     ]);
+    const card = (c: (typeof sameSubRaw)[number]) => ({
+      id: c.id, name: c.name, district: c.district?.name, status: c.status, clusterType: c.clusterType,
+      subCounty: c.subCounty?.name ?? c.subCountyName,
+      subCounties: c.coveredSubCounties.map((x) => x.subCounty.name),
+      clusterLeaderName: c.clusterLeaderName, clusterLeaderPhone: c.clusterLeaderPhone,
+      schoolCount: c._count.schools, _count: c._count,
+    });
+    const sameSub = sameSubRaw.map(card);
+    const sameSubIds = new Set(sameSub.map((c) => c.id));
+    // District alternatives exclude the same-sub-county ones (already eligible).
+    const sameDistrict = sameDistrictRaw.map(card).filter((c) => !sameSubIds.has(c.id));
     return {
       schoolId, district: school.districtId, subCounty: school.subCounty?.name,
       sameSubCounty: sameSub, sameDistrict,
       canCreate: scope.permissions.includes(PERMISSIONS.CLUSTER_ASSIGN),
-      hint: sameSub.length === 0 && school.subCountyId ? `No cluster exists for ${school.subCounty?.name}. Create one now.` : undefined,
+      hint: sameSub.length === 0 && school.subCountyId ? `No eligible cluster exists for this school's sub-county (${school.subCounty?.name}). Create one.` : undefined,
     };
   }
 
-  // ── Create ────────────────────────────────────────────────────────
+  /** Flat eligible-cluster list for a school (§5 assignment drawer). */
+  async eligibleForSchool(schoolId: string, user: AuthUser) {
+    const r = await this.recommendations(schoolId, user);
+    return {
+      schoolId, subCounty: r.subCounty,
+      eligible: r.sameSubCounty, districtAlternatives: r.sameDistrict,
+      canCreate: r.canCreate, hint: r.hint,
+    };
+  }
+
+  // ── Create (one OR MORE sub-counties, §4/§5) ──────────────────────
   async create(dto: CreateClusterDto, user: AuthUser) {
     const district = await this.prisma.district.findUnique({ where: { id: dto.districtId } });
     if (!district || district.regionId !== dto.regionId) throw new BadRequestException('district does not belong to region');
     const scope = await this.scope.resolveUserScope(user);
     if (!scope.countryScope && !scope.districtIds.includes(dto.districtId)) throw new ForbiddenException('District outside your scope');
 
-    let subCountyName: string | undefined;
+    // The covered sub-county set: prefer subCountyIds[], fall back to subCountyId.
+    const subCountyIds = [...new Set(
+      dto.subCountyIds?.length ? dto.subCountyIds : dto.subCountyId ? [dto.subCountyId] : [],
+    )];
+    if (subCountyIds.length === 0) throw new BadRequestException('At least one sub-county is required');
+    const subs = await this.prisma.subCounty.findMany({ where: { id: { in: subCountyIds } } });
+    if (subs.length !== subCountyIds.length) throw new BadRequestException('Unknown sub-county');
+    for (const sc of subs) if (sc.districtId !== dto.districtId) throw new BadRequestException('sub-county does not belong to district');
+    const primary = subs.find((s) => s.id === subCountyIds[0])!;
+
+    // Sub-county uniqueness (§10): one active cluster per sub-county by default —
+    // checked across BOTH the legacy primary column and the coverage join, so a
+    // multi-sub-county cluster can't overlap an existing one.
     let needsReview = false;
-    if (dto.subCountyId) {
-      const sc = await this.prisma.subCounty.findUnique({ where: { id: dto.subCountyId } });
-      if (!sc || sc.districtId !== dto.districtId) throw new BadRequestException('sub-county does not belong to district');
-      subCountyName = sc.name;
-      // Sub-county uniqueness (§10): one active cluster per sub-county by default.
-      const existing = await this.prisma.cluster.findFirst({ where: { subCountyId: dto.subCountyId, deletedAt: null, status: 'active' } });
-      if (existing) {
-        const canOverride = permissionsForRole(user.activeRole).includes(PERMISSIONS.CLUSTER_OVERRIDE);
-        if (!canOverride || !dto.overrideReason?.trim()) {
-          await this.audit.log({ action: 'cluster.createBlocked', subjectKind: 'SubCounty', subjectId: dto.subCountyId, actorId: user.userId, actorRole: user.activeRole, payload: { reason: 'sub-county already has an active cluster' } });
-          throw new BadRequestException('This sub-county already has an active cluster. Provide an override reason (requires permission) to add another.');
-        }
-        needsReview = true;
+    const taken = await this.prisma.subCounty.findMany({
+      where: {
+        id: { in: subCountyIds },
+        OR: [
+          { clusters: { some: { deletedAt: null, status: 'active' } } },
+          { clusterLinks: { some: { cluster: { deletedAt: null, status: 'active' } } } },
+        ],
+      },
+      select: { id: true, name: true },
+    });
+    if (taken.length) {
+      const canOverride = permissionsForRole(user.activeRole).includes(PERMISSIONS.CLUSTER_OVERRIDE);
+      if (!canOverride || !dto.overrideReason?.trim()) {
+        await this.audit.log({ action: 'cluster.createBlocked', subjectKind: 'SubCounty', subjectId: taken[0].id, actorId: user.userId, actorRole: user.activeRole, payload: { reason: 'sub-county already has an active cluster', taken: taken.map((t) => t.name) } });
+        throw new BadRequestException(`${taken.map((t) => t.name).join(', ')} already ${taken.length > 1 ? 'have' : 'has'} an active cluster. Provide an override reason (requires permission) to add another.`);
       }
+      needsReview = true;
     }
 
     let cluster;
     try {
       cluster = await this.prisma.cluster.create({
         data: {
-          name: dto.name, regionId: dto.regionId, districtId: dto.districtId, subCountyId: dto.subCountyId,
-          subCountyName, clusterType: dto.clusterType ?? ClusterType.mixed,
+          name: dto.name, regionId: dto.regionId, districtId: dto.districtId,
+          subCountyId: primary.id, subCountyName: primary.name,
+          clusterLeaderName: dto.clusterLeaderName?.trim() || undefined,
+          clusterLeaderPhone: dto.clusterLeaderPhone?.trim() || undefined,
+          clusterType: dto.clusterType ?? ClusterType.mixed,
           status: needsReview ? 'needs_review' : 'active',
           overrideReason: needsReview ? dto.overrideReason : undefined, responsibleStaffId: dto.responsibleStaffId,
+          coveredSubCounties: { create: subCountyIds.map((id) => ({ subCountyId: id })) },
         },
       });
     } catch (e) {
       // Race backstop: the partial unique index rejected a concurrent 2nd active
-      // cluster for this sub-county (the findFirst check above lost the race).
+      // cluster for the primary sub-county.
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         throw new BadRequestException('This sub-county already has an active cluster.');
       }
       throw e;
     }
-    await this.audit.log({ action: needsReview ? 'cluster.createOverride' : 'cluster.create', subjectKind: 'Cluster', subjectId: cluster.id, actorId: user.userId, actorRole: user.activeRole, payload: { name: dto.name, subCountyId: dto.subCountyId, districtId: dto.districtId, overrideReason: dto.overrideReason } });
+    await this.audit.log({ action: needsReview ? 'cluster.createOverride' : 'cluster.create', subjectKind: 'Cluster', subjectId: cluster.id, actorId: user.userId, actorRole: user.activeRole, payload: { name: dto.name, subCountyIds, districtId: dto.districtId, overrideReason: dto.overrideReason } });
     return cluster;
   }
 
@@ -230,10 +304,14 @@ export class ClustersService {
     if (!cluster || cluster.deletedAt) throw new NotFoundException('Cluster not found');
     // Scope the cluster too (H4) — a scoped role can't assign into out-of-scope clusters.
     if (!scope.countryScope && !scope.districtIds.includes(cluster.districtId)) throw new ForbiddenException('Cluster is outside your scope');
-    // Geography must match — district AND sub-county (§4/§10/§11).
+    // Geography must match — district AND the cluster's COVERED sub-county set
+    // (§4/§5/§10/§11). A school is eligible iff its sub-county is one the cluster
+    // covers (single- or multi-sub-county). Backend-enforced, not just UI.
     if (cluster.districtId !== school.districtId) throw new BadRequestException('Cluster and school are in different districts');
-    if (cluster.subCountyId && school.subCountyId && cluster.subCountyId !== school.subCountyId) {
-      throw new BadRequestException('Cluster and school are in different sub-counties');
+    const coveredLinks = await this.prisma.clusterSubCounty.findMany({ where: { clusterId }, select: { subCountyId: true } });
+    const coveredIds = coveredLinks.length ? coveredLinks.map((c) => c.subCountyId) : cluster.subCountyId ? [cluster.subCountyId] : [];
+    if (coveredIds.length && school.subCountyId && !coveredIds.includes(school.subCountyId)) {
+      throw new BadRequestException("This cluster does not cover the school's sub-county");
     }
 
     const previousClusterId = school.clusterId;

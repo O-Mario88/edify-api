@@ -48,6 +48,14 @@ export class ClustersController {
     return this.clusters.recommendations(schoolId, user);
   }
 
+  // The eligible-cluster list for a school's geography (§5 assignment drawer).
+  // Only clusters covering the school's sub-county are returned as eligible.
+  @Get('eligible-for-school/:schoolId')
+  @RequirePermissions(PERMISSIONS.CLUSTER_VIEW)
+  eligibleForSchool(@Param('schoolId') schoolId: string, @CurrentUser() user: AuthUser) {
+    return this.clusters.eligibleForSchool(schoolId, user);
+  }
+
   @Post()
   @RequirePermissions(PERMISSIONS.CLUSTER_ASSIGN)
   create(@Body() dto: CreateClusterDto, @CurrentUser() user: AuthUser) {

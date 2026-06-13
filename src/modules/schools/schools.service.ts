@@ -217,7 +217,14 @@ export class SchoolsService {
       this.prisma.school.findMany({
         where, skip: query.skip, take: query.take,
         orderBy: query.sortBy ? { [query.sortBy]: query.sortDir ?? 'asc' } : { createdAt: 'desc' },
-        include: { region: { select: { name: true } }, district: { select: { name: true } }, cluster: { select: { name: true } } },
+        include: {
+          region: { select: { name: true } },
+          district: { select: { name: true } },
+          subCounty: { select: { name: true } },
+          parish: { select: { name: true } },
+          cluster: { select: { name: true } },
+          accountOwner: { include: { user: { select: { name: true } } } },
+        },
       }),
       this.prisma.school.count({ where }),
     ]);

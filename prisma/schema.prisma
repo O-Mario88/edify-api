@@ -438,6 +438,7 @@ model SubCounty {
   parishes   Parish[]
   schools    School[]
   clusters   Cluster[]
+  clusterLinks ClusterSubCounty[]
   createdAt  DateTime  @default(now())
 
   @@unique([districtId, name])
@@ -567,20 +568,40 @@ model Cluster {
   district   District @relation(fields: [districtId], references: [id])
   districtId String
   subCounty  SubCounty? @relation(fields: [subCountyId], references: [id])
-  subCountyId String?
+  subCountyId String?    // PRIMARY sub-county (first selected); display + back-compat
   subCountyName String?  // display fallback
   clusterType ClusterType @default(mixed)
   status     ClusterRecordStatus @default(active)
   overrideReason String? // set when created via sub-county uniqueness override
   responsibleStaffId String?
+  clusterLeaderName  String?
+  clusterLeaderPhone String?
   schools    School[]
   assignments SchoolClusterAssignment[]
+  // A cluster covers ONE OR MORE sub-counties (§4/§5). Eligibility is computed
+  // against this set — a school is eligible iff its sub-county is covered.
+  coveredSubCounties ClusterSubCounty[]
   activities Activity[]
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   deletedAt  DateTime?
 
   @@index([districtId])
+  @@index([subCountyId])
+}
+
+// Join: the set of sub-counties a cluster covers (supports multi-sub-county
+// clusters). The cluster's PRIMARY sub-county is also kept on Cluster.subCountyId
+// for display + the historical per-sub-county uniqueness index.
+model ClusterSubCounty {
+  id          String    @id @default(cuid())
+  cluster     Cluster   @relation(fields: [clusterId], references: [id], onDelete: Cascade)
+  clusterId   String
+  subCounty   SubCounty @relation(fields: [subCountyId], references: [id])
+  subCountyId String
+  createdAt   DateTime  @default(now())
+
+  @@unique([clusterId, subCountyId])
   @@index([subCountyId])
 }
 
