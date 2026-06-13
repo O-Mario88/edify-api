@@ -800,18 +800,20 @@ model Activity {
 // ─────────────────────── Evidence ───────────────────────
 
 model EvidenceRecord {
-  id          String       @id @default(cuid())
-  activity    Activity     @relation(fields: [activityId], references: [id])
-  activityId  String
-  kind        EvidenceKind
-  uri         String
-  notes       String?
-  uploadedBy  String       // userId (staff or partner)
-  status      EvidenceStatus @default(uploaded)
-  reviewedBy  String?
-  reviewedAt  DateTime?
-  reviewNote  String?
-  createdAt   DateTime     @default(now())
+  id           String       @id @default(cuid())
+  activity     Activity     @relation(fields: [activityId], references: [id])
+  activityId   String
+  kind         EvidenceKind
+  uri          String
+  originalName String?      // the uploader's filename (for download + display)
+  mimeType     String?      // for correct Content-Type on preview/download
+  notes        String?
+  uploadedBy   String       // userId (staff or partner)
+  status       EvidenceStatus @default(uploaded)
+  reviewedBy   String?
+  reviewedAt   DateTime?
+  reviewNote   String?
+  createdAt    DateTime     @default(now())
 
   @@index([activityId])
 }

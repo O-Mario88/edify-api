@@ -45,6 +45,7 @@ export class EvidenceService {
     const rec = await this.prisma.evidenceRecord.create({
       data: {
         activityId, kind: kind as never, uri: file.filename,
+        originalName: file.originalname, mimeType: file.mimetype,
         uploadedBy: user.userId, status: 'uploaded',
       },
     });
@@ -73,17 +74,49 @@ export class EvidenceService {
     const rows = await this.prisma.evidenceRecord.findMany({
       where: { activityId }, orderBy: { createdAt: 'desc' }, take: 100,
     });
-    return rows.map((r) => ({ id: r.id, kind: r.kind, status: r.status, uploadedBy: r.uploadedBy, uploadedAt: r.createdAt }));
+    return rows.map((r) => ({
+      id: r.id, kind: r.kind, status: r.status, originalName: r.originalName, mimeType: r.mimeType,
+      uploadedBy: r.uploadedBy, uploadedAt: r.createdAt, reviewNote: r.reviewNote,
+    }));
   }
 
   /** Resolve an evidence record to its absolute on-disk path (for streaming). */
-  async fileFor(id: string): Promise<{ absPath: string; record: { uri: string } }> {
-    const record = await this.prisma.evidenceRecord.findUnique({ where: { id }, select: { uri: true } });
+  async fileFor(id: string): Promise<{ absPath: string; mimeType: string; originalName: string }> {
+    const record = await this.prisma.evidenceRecord.findUnique({
+      where: { id }, select: { uri: true, mimeType: true, originalName: true },
+    });
     if (!record) throw new NotFoundException('Evidence not found');
     // Guard against path traversal — the uri is just a filename.
     const safe = record.uri.replace(/[/\\]/g, '');
     const absPath = join(EVIDENCE_DIR, safe);
     if (!existsSync(absPath)) throw new NotFoundException('Evidence file missing on disk');
-    return { absPath, record };
+    return {
+      absPath,
+      mimeType: record.mimeType ?? 'application/octet-stream',
+      originalName: record.originalName ?? safe,
+    };
+  }
+
+  /** Staff/PL/IA review of an uploaded evidence file: accept or return with a
+   *  reason. Propagates to Activity.evidenceStatus so the IA / accountant
+   *  payment gate is backed by an actually-reviewed file. */
+  async review(user: AuthUser, id: string, action: 'accept' | 'return', note?: string) {
+    const rec = await this.prisma.evidenceRecord.findUnique({ where: { id }, select: { id: true, activityId: true } });
+    if (!rec) throw new NotFoundException('Evidence not found');
+    if (action === 'return' && !note?.trim()) throw new BadRequestException('A reason is required when returning evidence.');
+    const status = action === 'accept' ? 'accepted' : 'returned';
+    const updated = await this.prisma.evidenceRecord.update({
+      where: { id },
+      data: { status: status as never, reviewedBy: user.userId, reviewedAt: new Date(), reviewNote: note ?? null },
+    });
+    await this.prisma.activity.update({
+      where: { id: rec.activityId },
+      data: { evidenceStatus: status as never },
+    });
+    await this.audit.log({
+      action: `evidence.${action}`, subjectKind: 'Activity', subjectId: rec.activityId,
+      actorId: user.userId, actorRole: user.activeRole, payload: { evidenceId: id, note },
+    });
+    return { id: updated.id, status: updated.status };
   }
 }
