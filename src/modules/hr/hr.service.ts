@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { DomainEventService } from '../../common/realtime/domain-events.service';
 import { AuthUser } from '../../common/auth/auth-user';
 
 const HR_ROLES = new Set(['HumanResources', 'CountryDirector', 'Admin']);
@@ -20,7 +21,10 @@ function expandDates(start: string, end: string): string[] {
 // request workflow (request → HR approves/rejects).
 @Injectable()
 export class HrService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly events: DomainEventService,
+  ) {}
 
   /** Staff roster: who's on the team, their role, onboarding state, portfolio size. */
   async roster() {
@@ -64,12 +68,26 @@ export class HrService {
   async requestLeave(user: AuthUser, body: { type?: string; startDate?: string; endDate?: string; days?: number; reason?: string }) {
     if (!user.staffProfileId) throw new BadRequestException('Only staff with a profile can request leave.');
     if (!body.startDate || !body.endDate) throw new BadRequestException('start and end dates are required.');
-    return this.prisma.leave.create({
+    const leave = await this.prisma.leave.create({
       data: {
         staffProfileId: user.staffProfileId, type: body.type ?? 'annual',
         startDate: body.startDate, endDate: body.endDate, days: body.days ?? 1, reason: body.reason, status: 'pending',
       },
     });
+    // Close the handoff: route the request into the HR review queue (it was
+    // silently created with no signal to anyone who can approve it).
+    const hrUserIds = await this.events.usersWithRole('HumanResources');
+    await this.events.emit({
+      type: 'LeaveRequested', actorId: user.userId, actorRole: user.activeRole,
+      subjectKind: 'Leave', subjectId: leave.id, payload: { type: leave.type, days: leave.days },
+      notify: hrUserIds.map((rid) => ({
+        recipientId: rid, title: 'Leave request to review',
+        body: `${user.name}: ${leave.type} leave, ${leave.days} day(s).`,
+        targetRoute: '/dashboards/hr', actionRequired: true, priority: 'normal' as const,
+      })),
+      liveUserIds: [user.userId, ...hrUserIds],
+    });
+    return leave;
   }
 
   /** Approved leave shaped for the calendar / planning-availability engine.
@@ -100,9 +118,24 @@ export class HrService {
     if (!HR_ROLES.has(user.activeRole)) throw new ForbiddenException('Only HR / CD can review leave.');
     const leave = await this.prisma.leave.findUnique({ where: { id } });
     if (!leave) throw new NotFoundException('Leave request not found');
-    return this.prisma.leave.update({
+    const updated = await this.prisma.leave.update({
       where: { id },
       data: { status: action === 'approve' ? 'approved' : 'rejected', reviewedByUserId: user.userId, reviewedAt: new Date() },
     });
+    // Close the handoff back to the requesting staffer (no route — staff roles
+    // vary; the body carries the outcome).
+    const staffUserId = await this.events.userForStaff(leave.staffProfileId);
+    if (staffUserId) {
+      await this.events.emit({
+        type: 'LeaveReviewed', actorId: user.userId, actorRole: user.activeRole,
+        subjectKind: 'Leave', subjectId: id, payload: { status: updated.status },
+        notify: [{
+          recipientId: staffUserId, title: `Leave ${updated.status}`,
+          body: `Your ${leave.type} leave request was ${updated.status}.`, priority: 'normal' as const,
+        }],
+        liveUserIds: [user.userId, staffUserId],
+      });
+    }
+    return updated;
   }
 }

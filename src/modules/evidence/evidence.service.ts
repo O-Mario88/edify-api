@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ScopeService } from '../../common/scope/scope.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { AuthorizationService } from '../../common/authz/authorization.service';
+import { DomainEventService } from '../../common/realtime/domain-events.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { assertSafeUpload, sanitizeOriginalName } from './file-validation';
 import { EVIDENCE_SCANNER, type EvidenceScanner } from './evidence-scanner';
@@ -34,6 +35,7 @@ export class EvidenceService {
     private readonly scope: ScopeService,
     private readonly audit: AuditService,
     private readonly authz: AuthorizationService,
+    private readonly events: DomainEventService,
     @Inject(EVIDENCE_SCANNER) private readonly scanner: EvidenceScanner,
   ) {}
 
@@ -179,6 +181,27 @@ export class EvidenceService {
       action: `evidence.${action}`, subjectKind: 'Activity', subjectId: rec.activityId,
       actorId: user.userId, actorRole: user.activeRole, payload: { evidenceId: id, note },
     });
+    // Close the handoff: tell the uploader their evidence was accepted/returned.
+    // A return is actionable (re-upload); an accept is informational. Without
+    // this, the partner/staff who submitted had no signal and had to poll.
+    if (rec.uploadedBy) {
+      await this.events.emit({
+        type: action === 'accept' ? 'EvidenceAccepted' : 'EvidenceReturned',
+        actorId: user.userId, actorRole: user.activeRole, subjectKind: 'Activity', subjectId: rec.activityId,
+        payload: { evidenceId: id },
+        notify: [{
+          recipientId: rec.uploadedBy,
+          title: action === 'accept' ? 'Evidence accepted' : 'Evidence returned — re-upload needed',
+          body: action === 'accept'
+            ? 'Your submitted evidence was accepted.'
+            : note ? `Returned: ${note}` : 'Please review and re-upload your evidence.',
+          targetRoute: '/my-plan',
+          actionRequired: action === 'return',
+          priority: action === 'return' ? 'high' : 'normal',
+        }],
+        liveUserIds: [user.userId, rec.uploadedBy],
+      });
+    }
     return { id: updated.id, status: updated.status };
   }
 }
