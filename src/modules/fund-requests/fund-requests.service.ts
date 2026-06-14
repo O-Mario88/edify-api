@@ -254,7 +254,9 @@ export class FundRequestsService {
         reviewNotify.push({
           recipientId: rid, title: 'Fund request ready to disburse',
           body: `${submitterName}: ${fr.periodKey} — ${ugx(fr.totalAmount)} approved.`,
-          targetRoute: '/disbursements', actionRequired: true, priority: 'normal' as const,
+          // The fund-request Disburse button lives on /approvals (FundApprovalQueueLive
+          // with canDisburse), NOT /disbursements (the per-activity partner queue).
+          targetRoute: '/approvals', actionRequired: true, priority: 'normal' as const,
         });
       }
     }
