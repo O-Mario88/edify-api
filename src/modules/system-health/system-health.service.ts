@@ -92,6 +92,19 @@ export class SystemHealthService {
     add('duplicate-active-cluster-per-subcounty', 'error', dupClusters.length, 'Sub-counties with more than one active cluster');
     add('subcounty-unclustered-schools-no-cluster', 'info', subsWithUnclusteredNoCluster, 'Sub-counties with unclustered schools and no cluster yet');
 
+    // ── Payment / verification state-consistency invariants ──────────
+    const [paidNotTerminal, iaVerifiedMismatch, orphanEvidence] = await Promise.all([
+      // A paid activity must be in a verified/completed state.
+      this.prisma.activity.count({ where: { deletedAt: null, paymentStatus: 'paid', status: { notIn: ['ia_verified', 'accountant_confirmed', 'completed'] } } }),
+      // status=ia_verified must agree with iaVerificationStatus=confirmed.
+      this.prisma.activity.count({ where: { deletedAt: null, status: 'ia_verified', iaVerificationStatus: { not: 'confirmed' } } }),
+      // Evidence attached to a soft-deleted activity is orphaned.
+      this.prisma.evidenceRecord.count({ where: { activity: { deletedAt: { not: null } } } }),
+    ]);
+    add('paid-activity-not-terminal', 'error', paidNotTerminal, 'Activities paid but not in a verified/completed state (state inconsistency)');
+    add('ia-verified-status-mismatch', 'error', iaVerifiedMismatch, 'Activities in ia_verified status without iaVerificationStatus=confirmed');
+    add('orphan-evidence-on-deleted-activity', 'warning', orphanEvidence, 'Evidence records attached to a deleted activity (orphaned)');
+
     // Production must not run with mock data enabled.
     if (this.config.get('NODE_ENV') === 'production' && this.config.get<boolean>('ENABLE_MOCK_DATA')) {
       findings.push({ rule: 'mock-data-enabled-in-production', severity: 'error', count: 1, message: 'ENABLE_MOCK_DATA is true in production' });
