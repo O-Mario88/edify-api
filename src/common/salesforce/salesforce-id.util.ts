@@ -2,7 +2,10 @@
 // these IDs manually and IA confirms. Visits use SV-, trainings/cluster
 // meetings/SIT use TS-. When integration lands, this stays the entry contract.
 
-const SV = /^SV-\w{3,}$/i;
+// Visits accept SV- (canonical) AND SVE- (the prefix the frontend form emits) —
+// otherwise a visit ID a user enters in the FE was silently rejected here,
+// breaking completion in backend mode. Both forms round-trip the same.
+const SV = /^SVE?-\w{3,}$/i;
 const TS = /^TS-\w{3,}$/i;
 
 export type SalesforceKind = 'visit' | 'training';
