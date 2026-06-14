@@ -46,6 +46,12 @@ export const PERMISSIONS = {
   ANALYTICS_VIEW: 'analytics.view',
   EXPORT: 'data.export',
   SYSTEM_ADMIN: 'system.admin',
+  // Leadership Decision Engine — the executive intelligence layer. VIEW gates
+  // the decision boards (role-tailored inside the service); REVIEW gates the
+  // human-review actions (accept/reject/condition/defer + leadership notes).
+  // The engine RECOMMENDS; these permissions never auto-execute a decision.
+  LEADERSHIP_ENGINE_VIEW: 'leadership.view',
+  LEADERSHIP_DECISION_REVIEW: 'leadership.review',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -68,11 +74,15 @@ export const ROLE_PERMISSIONS: Record<EdifyRole, PermissionKey[]> = {
     P.COST_SETTINGS_MANAGE,
     P.STAFF_MANAGE, P.PARTNER_VIEW, P.PARTNER_MANAGE, P.PROJECT_MANAGE, P.ANALYTICS_VIEW, P.EXPORT,
     P.RECRUITMENT_INTELLIGENCE_VIEW,
+    // Full country leadership decision authority.
+    P.LEADERSHIP_ENGINE_VIEW, P.LEADERSHIP_DECISION_REVIEW,
   ],
   RegionalVicePresident: [
     // No SCHOOL_DIRECTORY_VIEW — summary analytics + recruitment intelligence only.
     P.SCHOOL_VIEW, P.CLUSTER_VIEW, P.SSA_VIEW, P.PLANNING_VIEW,
     P.BUDGET_VIEW_SUMMARY, P.ANALYTICS_VIEW, P.RECRUITMENT_INTELLIGENCE_VIEW,
+    // Region/country summary + approval-level decision review.
+    P.LEADERSHIP_ENGINE_VIEW, P.LEADERSHIP_DECISION_REVIEW,
   ],
   CountryProgramLead: [
     P.SCHOOL_VIEW, P.SCHOOL_DIRECTORY_VIEW, P.SCHOOL_EDIT, P.CLUSTER_VIEW, P.CLUSTER_ASSIGN, P.SSA_VIEW,
@@ -81,6 +91,8 @@ export const ROLE_PERMISSIONS: Record<EdifyRole, PermissionKey[]> = {
     // supervise (the top of the field approval chain).
     P.EVIDENCE_REVIEW, P.BUDGET_VIEW_DETAIL, P.BUDGET_APPROVE, P.PARTNER_VIEW, P.ANALYTICS_VIEW, P.EXPORT,
     P.RECRUITMENT_INTELLIGENCE_VIEW,
+    // Supervised-team decision support + review within their scope.
+    P.LEADERSHIP_ENGINE_VIEW, P.LEADERSHIP_DECISION_REVIEW,
   ],
   CCEO: [
     // The CCEO is the primary cluster-assigning field role: they run the
@@ -99,17 +111,23 @@ export const ROLE_PERMISSIONS: Record<EdifyRole, PermissionKey[]> = {
     P.CLUSTER_VIEW, P.CLUSTER_ASSIGN, P.CLUSTER_OVERRIDE, P.PLANNING_RECALC,
     P.SSA_VIEW, P.SSA_UPLOAD, P.PLANNING_VIEW, P.EVIDENCE_REVIEW, P.IA_VERIFY,
     P.ANALYTICS_VIEW, P.EXPORT, P.RECRUITMENT_INTELLIGENCE_VIEW,
+    // Data-confidence + SSA-impact readiness lens (no decision review authority).
+    P.LEADERSHIP_ENGINE_VIEW,
   ],
   ProgramAccountant: [
     // No SCHOOL_DIRECTORY_VIEW — finance/accountability only.
     P.SCHOOL_VIEW, P.PLANNING_VIEW, P.PAYMENT_ACT, P.BUDGET_VIEW_DETAIL,
     P.ANALYTICS_VIEW, P.EXPORT,
+    // Finance-implication view only — no staff/partner decision authority.
+    P.LEADERSHIP_ENGINE_VIEW,
   ],
   HumanResources: [
     // People surfaces only — staff performance, leave planner, daily debrief.
     // No SCHOOL_DIRECTORY_VIEW.
     P.STAFF_MANAGE, P.ANALYTICS_VIEW,
     P.STAFF_PERFORMANCE_VIEW, P.LEAVE_PLANNER_VIEW, P.DAILY_DEBRIEF_VIEW,
+    // Staff & HR decision board + review (promotion/PIP/workload — human-decided).
+    P.LEADERSHIP_ENGINE_VIEW, P.LEADERSHIP_DECISION_REVIEW,
   ],
   ProjectCoordinator: [
     // Explicitly granted directory access — the coordinator assigns project
