@@ -146,8 +146,10 @@ export function recommendPartnerAction(m: {
   const weakImpact = m.interventionImpactScore != null && m.interventionImpactScore < 40;
   const strong = m.targetAchievementRate >= 80 && m.evidenceAcceptanceRate >= 85 && (m.interventionImpactScore == null || m.interventionImpactScore >= 50);
 
-  if (strong) return 'renew';
+  // Operational guardrail FIRST: an overloaded/overdue partner should not get
+  // MORE work, even when their delivery is strong. Don't pile on.
   if (m.capacityUtilization > 100 || m.overdueRate > 30) return 'reduce_or_pause';
+  if (strong) return 'renew';
   // Terminate REVIEW requires several poor signals at once — never a single metric.
   if (weakTarget && weakEvidence && (weakImpact || m.interventionImpactScore == null)) return 'terminate_review';
   if (m.targetAchievementRate >= 65) return 'renew_with_conditions';
