@@ -122,20 +122,64 @@ export class HrService {
       where: { id },
       data: { status: action === 'approve' ? 'approved' : 'rejected', reviewedByUserId: user.userId, reviewedAt: new Date() },
     });
-    // Close the handoff back to the requesting staffer (no route — staff roles
-    // vary; the body carries the outcome).
+
+    // Scenario A: on approval, scan the staffer's plan for activities scheduled
+    // INSIDE the leave window so the conflict surfaces (it was pure mock theater
+    // before — the "auto-blocked conflicts" card read a mock store).
+    let conflictCount = 0;
+    if (action === 'approve') {
+      const leaveDays = expandDates(leave.startDate, leave.endDate);
+      if (leaveDays.length) {
+        conflictCount = await this.prisma.monthlyPlanActivity.count({
+          where: {
+            scheduledDate: { in: leaveDays },
+            status: { notIn: ['Completed', 'Cancelled'] },
+            plan: { ownerStaffId: leave.staffProfileId },
+          },
+        });
+      }
+    }
+
     const staffUserId = await this.events.userForStaff(leave.staffProfileId);
+    // On approval also notify the staffer's SUPERVISOR (PL/CCEO) who owns the
+    // re-planning — previously only the requester was told.
+    const supLink =
+      action === 'approve'
+        ? await this.prisma.staffSupervisorAssignment.findFirst({ where: { superviseeId: leave.staffProfileId }, select: { supervisorId: true } })
+        : null;
+    const supervisorUserId = supLink ? await this.events.userForStaff(supLink.supervisorId) : null;
+
+    const notify: { recipientId: string; title: string; body: string; targetRoute?: string; actionRequired?: boolean; priority: 'normal' | 'high' }[] = [];
     if (staffUserId) {
-      await this.events.emit({
-        type: 'LeaveReviewed', actorId: user.userId, actorRole: user.activeRole,
-        subjectKind: 'Leave', subjectId: id, payload: { status: updated.status },
-        notify: [{
-          recipientId: staffUserId, title: `Leave ${updated.status}`,
-          body: `Your ${leave.type} leave request was ${updated.status}.`, priority: 'normal' as const,
-        }],
-        liveUserIds: [user.userId, staffUserId],
+      notify.push({
+        recipientId: staffUserId,
+        title: `Leave ${updated.status}`,
+        body:
+          action === 'approve' && conflictCount
+            ? `Your ${leave.type} leave was approved. ${conflictCount} planned activit${conflictCount === 1 ? 'y' : 'ies'} fall in this window — reschedule them.`
+            : `Your ${leave.type} leave request was ${updated.status}.`,
+        priority: conflictCount ? 'high' : 'normal',
       });
     }
-    return updated;
+    if (supervisorUserId) {
+      notify.push({
+        recipientId: supervisorUserId,
+        title: `${leave.type} leave approved for your team`,
+        body: `A supervised staff member is on leave ${leave.startDate}→${leave.endDate}${conflictCount ? ` — ${conflictCount} of their planned activit${conflictCount === 1 ? 'y' : 'ies'} conflict and need re-planning.` : '.'}`,
+        targetRoute: '/team-plan',
+        actionRequired: conflictCount > 0,
+        priority: conflictCount ? 'high' : 'normal',
+      });
+    }
+    if (notify.length) {
+      await this.events.emit({
+        type: action === 'approve' ? 'LeaveApproved' : 'LeaveReviewed',
+        actorId: user.userId, actorRole: user.activeRole, subjectKind: 'Leave', subjectId: id,
+        payload: { status: updated.status, conflictCount },
+        notify,
+        liveUserIds: [user.userId, staffUserId, supervisorUserId].filter((x): x is string => !!x),
+      });
+    }
+    return { ...updated, conflictCount };
   }
 }
