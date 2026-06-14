@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { EdifyRole, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RealtimeService } from './realtime.service';
+import { AuditService } from '../audit/audit.service';
 
 export type NotifySpec = {
   recipientId: string;
@@ -40,21 +41,23 @@ export class DomainEventService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    private readonly audit: AuditService,
   ) {}
 
   async emit(evt: DomainEvent): Promise<void> {
     const at = Date.now();
     try {
-      // 1) Audit — the immutable record of what changed.
-      await this.prisma.auditLog.create({
-        data: {
-          action: evt.type,
-          subjectKind: evt.subjectKind,
-          subjectId: evt.subjectId,
-          actorId: evt.actorId,
-          actorRole: evt.actorRole,
-          payload: evt.payload ?? Prisma.JsonNull,
-        },
+      // 1) Audit — the immutable record of what changed. Routed through the
+      // hash-chained AuditService.log (prevHash + chainHash + advisory lock) so
+      // every emitted event is tamper-evident, not a raw null-hash row outside
+      // the chain.
+      await this.audit.log({
+        action: evt.type,
+        subjectKind: evt.subjectKind,
+        subjectId: evt.subjectId,
+        actorId: evt.actorId,
+        actorRole: evt.actorRole,
+        payload: evt.payload,
       });
 
       // 2) Notifications — saved per-recipient, never decorative.

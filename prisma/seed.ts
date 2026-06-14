@@ -132,7 +132,10 @@ type Staff = { id: string; userId: string; name: string };
 
 // ── Staff + partner users ──────────────────────────────────────────────────
 async function seedStaff(districtIds: string[]) {
-  const hash = await bcrypt.hash('edify', 10);
+  // Demo password is env-overridable for a per-event secret (defaults to 'edify'
+  // for local dev). MUST stay in lockstep with the FE runtime store + the bridge
+  // (edify-web: DEMO_LOGIN_PASSWORD) — reseed after changing it.
+  const hash = await bcrypt.hash(process.env.DEMO_LOGIN_PASSWORD ?? 'edify', 10);
   const baseUsers: { email: string; name: string; role: EdifyRole }[] = [
     { email: 'admin@edify.org', name: 'Edify Admin', role: 'Admin' },
     { email: 'cd@edify.org', name: 'Sarah Okello', role: 'CountryDirector' },

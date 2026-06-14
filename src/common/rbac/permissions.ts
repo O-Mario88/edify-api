@@ -73,7 +73,11 @@ export const ROLE_PERMISSIONS: Record<EdifyRole, PermissionKey[]> = {
     // operational directory. SCHOOL_VIEW retained for any aggregate that
     // still references it; the directory endpoints now gate on the new perm.
     P.SCHOOL_VIEW, P.SCHOOL_EDIT, P.CLUSTER_VIEW, P.CLUSTER_ASSIGN, P.CLUSTER_OVERRIDE,
-    P.PLANNING_RECALC, P.SSA_VIEW, P.PLANNING_VIEW, P.PLANNING_CREATE, P.ACTIVITY_ASSIGN,
+    // CD does NOT plan or assign field work (spec: "CD doesn't plan"; CD flags
+    // issues to the PL instead). PLANNING_CREATE + ACTIVITY_ASSIGN removed —
+    // CD keeps recalc/view for oversight only. (CD has no staffProfile, so plan
+    // authoring was already blocked at the service layer; this aligns the matrix.)
+    P.PLANNING_RECALC, P.SSA_VIEW, P.PLANNING_VIEW,
     // CD owns the rate card and sees every budget — but does NOT approve fund
     // requests. Approval lives in the field chain: CCEO → PL. (Spec correction.)
     P.EVIDENCE_REVIEW, P.BUDGET_VIEW_SUMMARY, P.BUDGET_VIEW_DETAIL,
