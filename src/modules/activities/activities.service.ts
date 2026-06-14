@@ -4,6 +4,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { DomainEventService, type NotifySpec } from '../../common/realtime/domain-events.service';
 import { ScopeService } from '../../common/scope/scope.service';
+import { AuthorizationService } from '../../common/authz/authorization.service';
+import type { Action } from '../../common/authz/resource-ref';
 import { AuthUser } from '../../common/auth/auth-user';
 import { paginate } from '../../common/dto/pagination.dto';
 import { isValidSalesforceId } from '../../common/salesforce/salesforce-id.util';
@@ -24,6 +26,7 @@ export class ActivitiesService {
     private readonly audit: AuditService,
     private readonly events: DomainEventService,
     private readonly scope: ScopeService,
+    private readonly authz: AuthorizationService,
     private readonly assignment: AssignmentService,
   ) {}
 
@@ -33,18 +36,13 @@ export class ActivitiesService {
     return (await this.prisma.school.findMany({ where: { deletedAt: null, ...this.scope.schoolWhere(scope) }, select: { id: true } })).map((s) => s.id);
   }
 
-  // Guard mutations against IDOR — an activity must be within the caller's scope.
-  private async assertInScope(activity: Activity, user: AuthUser): Promise<void> {
-    const scope = await this.scope.resolveUserScope(user);
-    if (scope.countryScope) return;
-    // Partner roles may act on partner-delivered work (per-partner identity link
-    // is a TODO — tightened once User↔Partner is wired).
-    if ((scope.activeRole === 'PartnerAdmin' || scope.activeRole === 'PartnerFieldOfficer') && activity.deliveryType === 'partner') return;
-    if (activity.schoolId) {
-      const ids = await this.scopedSchoolIds(user);
-      if (ids && ids.includes(activity.schoolId)) return;
-    }
-    throw new ForbiddenException('Activity is outside your scope');
+  // Guard mutations against IDOR — an activity must be within the caller's
+  // scope. Delegates to the central object-level engine (ownership / partner
+  // identity / supervision / geography), which also closes the old partner
+  // bypass: a partner user is now pinned to their OWN partner's work, not any
+  // partner-delivered activity. Honours AUTHZ_MODE (shadow logs, enforce throws).
+  private async assertInScope(activity: Activity, user: AuthUser, action: Action = 'update'): Promise<void> {
+    await this.authz.assertCanAccess(user, { kind: 'activity', id: activity.id, loadedEntity: activity }, action);
   }
 
   async list(query: QueryActivitiesDto, user: AuthUser) {
@@ -166,6 +164,8 @@ export class ActivitiesService {
     const activity = await this.prisma.activity.findUnique({ where: { id } });
     if (!activity) throw new NotFoundException('Activity not found');
     if (activity.status !== 'awaiting_ia_verification') throw new BadRequestException('Activity is not awaiting IA verification');
+    // Object-level check (IA_VERIFY) + audit the sensitive verification.
+    await this.authz.assertCanAccess(user, { kind: 'activity', id, loadedEntity: activity }, 'verify');
     const updated = await this.prisma.activity.update({
       where: { id },
       data: { status: 'ia_verified', iaVerificationStatus: 'confirmed', iaConfirmedAt: new Date(), iaConfirmedBy: user.userId, paymentStatus: activity.assignedPartnerId ? 'ia_confirmed' : 'netsuite_accountability' },
@@ -284,12 +284,16 @@ export class ActivitiesService {
   async clearPayment(id: string, user: AuthUser) {
     const a = await this.prisma.activity.findUnique({ where: { id } });
     if (!a) throw new NotFoundException('Activity not found');
-    await this.assertInScope(a, user);
+    // Explicit, friendly business gates — these are the AUTHORITATIVE payment
+    // guard and stay enforcing at all times (never shadowed): money never moves
+    // before evidence is accepted, a Salesforce ID exists, and IA has confirmed.
     if (a.deliveryType !== 'partner') throw new BadRequestException('Payment clearance is for partner-delivered activities.');
     if (a.iaVerificationStatus !== 'confirmed') throw new ForbiddenException('Cannot clear payment — activity is not IA-verified.');
     if (!a.salesforceActivityId) throw new ForbiddenException('Cannot clear payment — no Salesforce ID entered.');
     if (a.evidenceStatus !== 'accepted') throw new ForbiddenException('Cannot clear payment — evidence not accepted.');
     if (a.paymentStatus === 'paid' || a.paymentStatus === 'closed') throw new BadRequestException('Payment already cleared.');
+    // Object-level check (PAYMENT_ACT + scope) + audit the sensitive money-move.
+    await this.authz.assertCanAccess(user, { kind: 'payment', id: a.id, loadedEntity: a }, 'pay');
 
     const updated = await this.prisma.activity.update({ where: { id }, data: { paymentStatus: 'paid' } });
 

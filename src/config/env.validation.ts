@@ -30,6 +30,18 @@ export class EnvVars {
   @IsBoolean()
   ENABLE_BACKGROUND_JOBS = false;
 
+  // Object-level authorization enforcement (src/common/authz). `shadow` logs
+  // would-be denials without throwing (safe rollout); `enforce` blocks. Prod
+  // must run `enforce`.
+  @IsIn(['shadow', 'enforce'])
+  AUTHZ_MODE: string = 'shadow';
+
+  // When true (default), partner users with no Partner.userId link are bridged
+  // to the first active partner (demo seed). Disable in production once real
+  // User↔Partner linkage exists.
+  @IsBoolean()
+  PARTNER_ROLE_BRIDGE = true;
+
   @IsOptional()
   @IsString()
   REDIS_URL?: string;
@@ -46,6 +58,8 @@ export function validateEnv(config: Record<string, unknown>) {
     ENABLE_DEV_ENDPOINTS: toBool(config.ENABLE_DEV_ENDPOINTS),
     ENABLE_SALESFORCE_INTEGRATION: toBool(config.ENABLE_SALESFORCE_INTEGRATION),
     ENABLE_BACKGROUND_JOBS: toBool(config.ENABLE_BACKGROUND_JOBS),
+    AUTHZ_MODE: config.AUTHZ_MODE ?? 'shadow',
+    PARTNER_ROLE_BRIDGE: toBool(config.PARTNER_ROLE_BRIDGE, true),
   });
   const errors = validateSync(parsed, { skipMissingProperties: false });
   if (errors.length) {
@@ -58,6 +72,9 @@ export function validateEnv(config: Record<string, unknown>) {
     if (parsed.ENABLE_DEV_ENDPOINTS) throw new Error('ENABLE_DEV_ENDPOINTS must be false in production.');
     if (parsed.JWT_SECRET.length < 16 || parsed.JWT_SECRET.includes('change-me') || parsed.JWT_SECRET.includes('dev-only')) {
       throw new Error('A strong JWT_SECRET is required in production.');
+    }
+    if (parsed.AUTHZ_MODE !== 'enforce') {
+      throw new Error('AUTHZ_MODE must be "enforce" in production (object-level authorization cannot run in shadow).');
     }
   }
   return parsed;

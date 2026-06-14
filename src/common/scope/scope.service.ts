@@ -108,9 +108,9 @@ export class ScopeService {
         coreSchoolIds = schools.filter((s) => s.schoolType === 'core').map((s) => s.id);
       }
     } else if ((role === 'PartnerAdmin' || role === 'PartnerFieldOfficer')) {
-      // Partner users see only their own partner's activities. Partner identity
-      // resolution is wired when partner-user linkage lands; empty for now.
-      partnerIds = [];
+      // Partner users see ONLY their own partner's activities. Resolve the
+      // partner identity so the object-level layer can pin them to it.
+      partnerIds = await this.resolvePartnerIds(user);
     }
 
     return {
@@ -139,6 +139,28 @@ export class ScopeService {
       canAssign: has(PERMISSIONS.ACTIVITY_ASSIGN),
       canExport: has(PERMISSIONS.EXPORT),
     };
+  }
+
+  /** Resolve the partner id(s) a partner user acts as.
+   *  1) canonical FK — a partner field officer authenticates as Partner.userId.
+   *  2) demo role-bridge fallback — the seed never sets Partner.userId, and the
+   *     FE partner demo user maps by ROLE; pin to the first active partner.
+   *     Disable in production once real linkage exists (PARTNER_ROLE_BRIDGE=false). */
+  async resolvePartnerIds(user: AuthUser): Promise<string[]> {
+    const linked = await this.prisma.partner.findFirst({
+      where: { userId: user.userId, deletedAt: null, activeStatus: true },
+      select: { id: true },
+    });
+    if (linked) return [linked.id];
+    if (process.env.PARTNER_ROLE_BRIDGE !== 'false') {
+      const first = await this.prisma.partner.findFirst({
+        where: { activeStatus: true, deletedAt: null },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true },
+      });
+      if (first) return [first.id];
+    }
+    return [];
   }
 
   /** School constraint for school-LEVEL reads (list/detail). Summary-only roles
