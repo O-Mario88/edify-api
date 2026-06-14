@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
+import { ScopeService } from '../../common/scope/scope.service';
 import { AuthUser } from '../../common/auth/auth-user';
 
 // Partners — onboarded and governed by the Country Director. Eligibility for
@@ -19,7 +20,25 @@ const ACTIVE_ACTIVITY = ['planned', 'scheduled', 'assigned_to_partner', 'partner
 
 @Injectable()
 export class PartnersService {
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+    private readonly scope: ScopeService,
+  ) {}
+
+  /** Resolve the partner org the caller acts as. Uses the SAME identity bridge
+   *  as the scope engine — Partner.userId FK first, then the demo role-bridge
+   *  fallback — so the partner round-trip works even though the seed doesn't set
+   *  Partner.userId. A bare `userId` match here silently returned null and broke
+   *  the partner's My Plan / payment views in backend mode. */
+  private async resolveCallerPartner(user: AuthUser) {
+    const ids = await this.scope.resolvePartnerIds(user);
+    const partner = ids.length
+      ? await this.prisma.partner.findFirst({ where: { id: { in: ids }, deletedAt: null } })
+      : null;
+    if (!partner) throw new NotFoundException('No partner organization is linked to this account.');
+    return partner;
+  }
 
   private shape(p: { id: string; name: string; regionName: string | null; coverageDistricts: string[]; expertiseAreas: string[]; trainsOn: string[]; isCertified: boolean; certificationStatus: string | null; activeStatus: boolean; contractStatus: string | null; contactPerson: string | null; email: string | null; phone: string | null; onboardedAt: Date | null }) {
     return {
@@ -76,16 +95,13 @@ export class PartnersService {
   /** The Partner organization the CALLER authenticates as (round-trip seam).
    *  A partner field officer's session is scoped to this one record. */
   async myPartner(user: AuthUser) {
-    const p = await this.prisma.partner.findFirst({ where: { deletedAt: null, userId: user.userId } });
-    if (!p) throw new NotFoundException('No partner organization is linked to this account.');
-    return this.shape(p);
+    return this.shape(await this.resolveCallerPartner(user));
   }
 
   /** Activities assigned TO the caller's partner — the work that round-trips
    *  back from a staffer's "assign to partner" into the partner's own queue. */
   async myActivities(user: AuthUser) {
-    const partner = await this.prisma.partner.findFirst({ where: { deletedAt: null, userId: user.userId } });
-    if (!partner) throw new NotFoundException('No partner organization is linked to this account.');
+    const partner = await this.resolveCallerPartner(user);
     const rows = await this.prisma.activity.findMany({
       where: { deletedAt: null, assignedPartnerId: partner.id },
       orderBy: [{ scheduledDate: 'asc' }, { createdAt: 'desc' }], take: 500,
