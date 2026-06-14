@@ -251,6 +251,16 @@ model User {
   roles        EdifyRole[]
   activeRole   EdifyRole
   isActive     Boolean   @default(true)
+  // Brute-force protection: lock after repeated failures (auth.service).
+  failedLoginCount Int      @default(0)
+  lockedUntil      DateTime?
+  // MFA seam (Phase 8 design): high-risk roles enrol TOTP; secret is stored
+  // encrypted (field-crypto) when enrolment ships.
+  mfaEnabled       Boolean  @default(false)
+  mfaSecret        String?
+  // Password-reset seam: store only a HASH of the reset token + its expiry.
+  passwordResetTokenHash String?
+  passwordResetExpires   DateTime?
   staffProfile StaffProfile?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt

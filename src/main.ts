@@ -6,6 +6,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { requestContextMiddleware } from './common/context/request-context';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: false });
@@ -28,6 +29,9 @@ async function bootstrap() {
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: false }),
   );
+  // Generic error envelope — no stack traces / DB errors to clients; correlationId
+  // ties a user-reported failure to the full server-side log line.
+  app.useGlobalFilters(new AllExceptionsFilter());
 
   if (config.get<string>('NODE_ENV') !== 'production') {
     const doc = new DocumentBuilder()

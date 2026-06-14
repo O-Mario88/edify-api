@@ -33,10 +33,10 @@ export class SecurityHealthService {
       loginOk, loginFail, denies, shadowDenies, sensitiveAllows, downloads24h,
       quarantined, scanGroups,
       paidWithoutIa, paidWithoutEvidence, paidWithoutSf, accountabilityNoNetsuite,
-      activeUsers,
+      activeUsers, lockedAccounts, mfaEnabled,
     ] = await Promise.all([
       countAudit({ action: 'auth.login', success: true, createdAt: { gte: since } }),
-      countAudit({ action: 'auth.login', success: false, createdAt: { gte: since } }),
+      countAudit({ action: { in: ['auth.login.failed', 'auth.login.lockout', 'auth.login.locked'] }, createdAt: { gte: since } }),
       countAudit({ action: 'authz.deny', createdAt: { gte: since } }),
       countAudit({ action: 'authz.deny.shadow', createdAt: { gte: since } }),
       countAudit({ action: 'authz.allow.sensitive', createdAt: { gte: since } }),
@@ -48,6 +48,8 @@ export class SecurityHealthService {
       this.prisma.activity.count({ where: { deletedAt: null, deliveryType: 'partner', paymentStatus: { in: ['accountant_cleared', 'paid'] }, salesforceActivityId: null } }),
       this.prisma.fundRequest.count({ where: { accountabilityStatus: 'approved', accountabilityNetsuiteId: null } }),
       this.prisma.user.count({ where: { isActive: true, deletedAt: null } }),
+      this.prisma.user.count({ where: { deletedAt: null, lockedUntil: { gt: new Date() } } }),
+      this.prisma.user.count({ where: { isActive: true, deletedAt: null, mfaEnabled: true } }),
     ]);
 
     const chain = await this.audit.verifyChain();
@@ -82,8 +84,8 @@ export class SecurityHealthService {
         logins24h: loginOk,
         failedLogins24h: loginFail,
         activeUsers,
-        lockedAccounts: null as number | null, // Phase 8
-        mfaAdoption: null as number | null, // Phase 8
+        lockedAccounts,
+        mfaAdoption: activeUsers > 0 ? Math.round((mfaEnabled / activeUsers) * 100) : 0,
       },
       authorization: { denies24h: denies, shadowDenies24h: shadowDenies, sensitiveAllows24h: sensitiveAllows, evidenceDownloads24h: downloads24h },
       auditIntegrity: { ok: chain.ok, chainedRows: chain.checked, brokenAtSeq: chain.brokenAtSeq ?? null, reason: chain.reason ?? null },
