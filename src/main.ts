@@ -5,12 +5,16 @@ import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { requestContextMiddleware } from './common/context/request-context';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: false });
   const config = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
 
+  // Open a per-request AsyncLocalStorage scope (ip/ua/correlationId) FIRST so it
+  // wraps every downstream handler — the audit log stamps provenance from it.
+  app.use(requestContextMiddleware);
   app.use(helmet());
   // CORS: allowlist from CORS_ORIGINS (comma-separated); permissive only outside prod.
   const origins = (config.get<string>('CORS_ORIGINS') ?? '').split(',').map((o) => o.trim()).filter(Boolean);

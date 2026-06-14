@@ -14,6 +14,8 @@
     "prisma:studio": "prisma studio",
     "seed": "ts-node --transpile-only prisma/seed.ts",
     "seed:school-directory-test": "ts-node --transpile-only prisma/seed-school-directory-test.ts",
+    "audit:verify": "ts-node --transpile-only scripts/audit-verify.ts",
+    "audit:export": "ts-node --transpile-only scripts/audit-export.ts",
     "lint": "eslint \"src/**/*.ts\" --fix",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

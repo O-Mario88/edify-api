@@ -1189,18 +1189,34 @@ model Notification {
 
 model AuditLog {
   id          String   @id @default(cuid())
-  action      String   // "school.upload", "ia.confirm", ...
+  // Monotonic insert order — the chain is verified in seq order (createdAt ties
+  // at ms resolution would otherwise be ambiguous).
+  seq         BigInt   @default(autoincrement())
+  action      String   // "school.upload", "ia.confirm", "authz.deny", ...
   subjectKind String?
   subjectId   String?
   actor       User?    @relation("AuditActor", fields: [actorId], references: [id])
   actorId     String?
   actorRole   EdifyRole?
   payload     Json?
+  // Request provenance (captured via AsyncLocalStorage request context).
+  ipAddress     String?
+  userAgent     String?
+  correlationId String?
+  success       Boolean  @default(true)
+  reason        String?
+  // Tamper-evidence: hash chain. hash = sha256(prevHash + canonical(record));
+  // prevHash links to the previous row. A DB trigger blocks UPDATE/DELETE.
+  prevHash    String?
+  hash        String?
   createdAt   DateTime @default(now())
 
   @@index([subjectKind, subjectId])
   @@index([actorId])
   @@index([createdAt])
+  @@index([seq])
+  @@index([action])
+  @@index([correlationId])
 }
 
 // ── Target framework ────────────────────────────────────────────────
