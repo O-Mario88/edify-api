@@ -7,6 +7,9 @@ import { AuthUser } from '../../common/auth/auth-user';
 import { getOperationalFY } from '../../common/fy/fy.util';
 import { permissionsForRole, PERMISSIONS } from '../../common/rbac/permissions';
 import { BudgetService } from '../budget/budget.service';
+import { DomainEventService } from '../../common/realtime/domain-events.service';
+
+const ugx = (n: number) => `UGX ${Math.round(n || 0).toLocaleString()}`;
 
 type Period = 'weekly' | 'monthly' | 'quarterly' | 'annual';
 
@@ -20,7 +23,20 @@ export class FundRequestsService {
     private readonly scope: ScopeService,
     private readonly audit: AuditService,
     private readonly budget: BudgetService,
+    private readonly events: DomainEventService,
   ) {}
+
+  // The User ids that SUPERVISE this staff profile (the approvers a request
+  // routes UP to). Reverse of supervisedUserIds. [] if no profile / no chain.
+  private async supervisorUserIds(staffProfileId?: string | null): Promise<string[]> {
+    if (!staffProfileId) return [];
+    const links = await this.prisma.staffSupervisorAssignment.findMany({
+      where: { superviseeId: staffProfileId },
+      select: { supervisorId: true },
+    });
+    const ids = await Promise.all(links.map((l) => this.events.userForStaff(l.supervisorId)));
+    return ids.filter((x): x is string => !!x);
+  }
 
   async submit(user: AuthUser, dto: { period?: string; month?: number; quarter?: string }) {
     const period = (dto.period ?? 'monthly') as Period;
@@ -66,6 +82,18 @@ export class FundRequestsService {
       action: 'fundRequest.submit', subjectKind: 'FundRequest', subjectId: fr.id,
       actorId: user.userId, actorRole: user.activeRole,
       payload: { period, periodKey, total, count },
+    });
+    // Notify the approver(s) — the submitter's supervisor — that a request is
+    // waiting in their queue. (Audit above is the hash-chained record.)
+    const approvers = await this.supervisorUserIds(user.staffProfileId);
+    await this.events.notifyOnly({
+      type: 'FundRequest.Submitted', subjectKind: 'FundRequest', subjectId: fr.id, actorId: user.userId,
+      notify: approvers.map((rid) => ({
+        recipientId: rid, title: 'Fund request to review',
+        body: `${user.name}: ${periodKey} — ${ugx(total)} (${count} activit${count === 1 ? 'y' : 'ies'}).`,
+        targetRoute: '/approvals', actionRequired: true, priority: 'normal' as const,
+      })),
+      liveUserIds: [user.userId, ...approvers],
     });
     return fr;
   }
@@ -199,6 +227,30 @@ export class FundRequestsService {
       action: `fundRequest.${action}`, subjectKind: 'FundRequest', subjectId: id,
       actorId: user.userId, actorRole: user.activeRole, payload: { note: note ?? null },
     });
+    // Notify the submitter of the outcome; on approve also alert the accountants
+    // that an approved request is now waiting to be disbursed.
+    const reviewNotify = [{
+      recipientId: fr.submittedByUserId,
+      title: action === 'approve' ? 'Fund request approved' : action === 'return' ? 'Fund request returned' : 'Fund request rejected',
+      body: `Your ${fr.periodKey} request — ${ugx(fr.totalAmount)}${note ? ` · ${note}` : ''}.`,
+      targetRoute: '/fund-requests', actionRequired: action !== 'approve', priority: 'normal' as const,
+    }];
+    let accountants: string[] = [];
+    if (action === 'approve') {
+      accountants = await this.events.usersWithRole('ProgramAccountant');
+      const submitterName = (await this.prisma.user.findUnique({ where: { id: fr.submittedByUserId }, select: { name: true } }))?.name ?? 'A planner';
+      for (const rid of accountants) {
+        reviewNotify.push({
+          recipientId: rid, title: 'Fund request ready to disburse',
+          body: `${submitterName}: ${fr.periodKey} — ${ugx(fr.totalAmount)} approved.`,
+          targetRoute: '/disbursements', actionRequired: true, priority: 'normal' as const,
+        });
+      }
+    }
+    await this.events.notifyOnly({
+      type: `FundRequest.${status}`, subjectKind: 'FundRequest', subjectId: id, actorId: user.userId,
+      notify: reviewNotify, liveUserIds: [user.userId, fr.submittedByUserId, ...accountants],
+    });
     return updated;
   }
 
@@ -223,6 +275,15 @@ export class FundRequestsService {
       },
     });
     await this.audit.log({ action: 'fundRequest.disbursed', subjectKind: 'FundRequest', subjectId: id, actorId: user.userId, actorRole: user.activeRole, payload: { method: body.method ?? null, reference: body.reference ?? null } });
+    await this.events.notifyOnly({
+      type: 'FundRequest.Disbursed', subjectKind: 'FundRequest', subjectId: id, actorId: user.userId,
+      notify: [{
+        recipientId: fr.submittedByUserId, title: 'Funds disbursed',
+        body: `Your ${fr.periodKey} request — ${ugx(updated.disbursedAmount ?? fr.totalAmount)} disbursed${body.reference ? ` (ref ${body.reference})` : ''}.`,
+        targetRoute: '/fund-requests', actionRequired: false, priority: 'normal' as const,
+      }],
+      liveUserIds: [user.userId, fr.submittedByUserId],
+    });
     return updated;
   }
 
@@ -251,6 +312,17 @@ export class FundRequestsService {
       },
     });
     await this.audit.log({ action: 'fundRequest.accountabilitySubmitted', subjectKind: 'FundRequest', subjectId: id, actorId: user.userId, actorRole: user.activeRole, payload: { netsuiteId: body.netsuiteId ?? null, amountSpent: body.amountSpent ?? null } });
+    // Accountability is filed by the owner — notify their supervisor to review.
+    const accApprovers = await this.supervisorUserIds(user.staffProfileId);
+    await this.events.notifyOnly({
+      type: 'FundRequest.AccountabilitySubmitted', subjectKind: 'FundRequest', subjectId: id, actorId: user.userId,
+      notify: accApprovers.map((rid) => ({
+        recipientId: rid, title: 'Accountability to review',
+        body: `${user.name} filed accountability for ${fr.periodKey}${body.netsuiteId ? ` (NetSuite ${body.netsuiteId})` : ''}.`,
+        targetRoute: '/approvals', actionRequired: true, priority: 'normal' as const,
+      })),
+      liveUserIds: [user.userId, ...accApprovers],
+    });
     return updated;
   }
 
@@ -268,6 +340,16 @@ export class FundRequestsService {
       data: { accountabilityStatus: action === 'approve' ? 'approved' : 'returned', accountabilityReviewedAt: new Date(), reviewNote: note },
     });
     await this.audit.log({ action: `fundRequest.accountability.${action}`, subjectKind: 'FundRequest', subjectId: id, actorId: user.userId, actorRole: user.activeRole, payload: { note: note ?? null } });
+    await this.events.notifyOnly({
+      type: `FundRequest.Accountability.${action}`, subjectKind: 'FundRequest', subjectId: id, actorId: user.userId,
+      notify: [{
+        recipientId: fr.submittedByUserId,
+        title: action === 'approve' ? 'Accountability approved' : 'Accountability returned',
+        body: `Your ${fr.periodKey} accountability${note ? ` — ${note}` : ''}.`,
+        targetRoute: '/fund-requests', actionRequired: action === 'return', priority: 'normal' as const,
+      }],
+      liveUserIds: [user.userId, fr.submittedByUserId],
+    });
     return updated;
   }
 }

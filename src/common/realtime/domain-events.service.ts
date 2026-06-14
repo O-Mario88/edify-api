@@ -95,6 +95,44 @@ export class DomainEventService {
     }
   }
 
+  /** Notifications + realtime push WITHOUT writing an audit row. Use this when
+   *  the caller already wrote a hash-chained audit entry via AuditService.log
+   *  (e.g. money operations, whose audit must stay in the tamper-evident chain)
+   *  and only needs the recipient notifications + live refresh. */
+  async notifyOnly(evt: Omit<DomainEvent, 'actorRole' | 'payload'>): Promise<void> {
+    const at = Date.now();
+    try {
+      const created = [];
+      for (const n of evt.notify ?? []) {
+        const row = await this.prisma.notification.create({
+          data: {
+            recipientId: n.recipientId,
+            title: n.title,
+            body: n.body,
+            contextType: n.contextType ?? evt.subjectKind,
+            contextId: n.contextId ?? evt.subjectId,
+            targetRoute: n.targetRoute,
+            actionRequired: n.actionRequired ?? false,
+            priority: (n.priority ?? 'normal') as never,
+          },
+        });
+        created.push(row);
+      }
+      for (const n of created) {
+        this.realtime.publish(n.recipientId, {
+          type: 'notification', subjectKind: 'Notification', subjectId: n.id, at,
+          meta: { title: n.title, actionRequired: n.actionRequired, priority: n.priority },
+        });
+      }
+      this.realtime.publishMany(
+        [...(evt.liveUserIds ?? []), ...created.map((c) => c.recipientId), evt.actorId],
+        { type: evt.type, subjectKind: evt.subjectKind, subjectId: evt.subjectId, at },
+      );
+    } catch {
+      // Best-effort — the source-of-truth write + its chained audit already committed.
+    }
+  }
+
   /** Resolve the User ids for a role (e.g. all accountants to notify of a ready payment). */
   async usersWithRole(role: EdifyRole): Promise<string[]> {
     const rows = await this.prisma.user.findMany({ where: { roles: { has: role } }, select: { id: true } });
