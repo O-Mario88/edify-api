@@ -31,6 +31,7 @@ import { HrModule } from './modules/hr/hr.module';
 import { SecurityModule } from './modules/security/security.module';
 import { LeadershipModule } from './modules/leadership/leadership.module';
 import { BudgetIntelligenceModule } from './modules/budget-intelligence/budget-intelligence.module';
+import { FlagsModule } from './modules/flags/flags.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -66,6 +67,7 @@ import { HealthController } from './health.controller';
     SecurityModule,
     LeadershipModule,
     BudgetIntelligenceModule,
+    FlagsModule,
     // Roadmap modules (scaffolded next): users/staff, planning, evidence,
     // salesforce-verification, payments, annual-plan-budget, special-projects,
     // partners, messages, notifications, reports.

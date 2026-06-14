@@ -1803,3 +1803,36 @@ model FinanceDecisionNote {
 
   @@index([insightId])
 }
+
+// ── CD → PL flag handoff ────────────────────────────────────────────────────
+// The Country Director MONITORS + flags issues to a Program Lead (who plans),
+// instead of planning directly. A flag is a persisted, PL-assigned action item
+// with a notification — never a field-planning action by the CD.
+enum CdFlagStatus {
+  open
+  acknowledged
+  resolved
+}
+
+model CdFlag {
+  id               String   @id @default(cuid())
+  raisedByUserId   String   // the CD
+  raisedByName     String?
+  assignedToUserId String   // the Program Lead
+  category         String   // ssa | target | partner | staff | cluster | fund | evidence | data_quality | core_package
+  scopeType        String?  // region | district | cluster | school | staff | partner
+  scopeId          String?
+  scopeName        String?
+  note             String
+  recommendedAction String?
+  priority         String   @default("normal") // low | normal | high | urgent
+  dueDate          String?
+  status           CdFlagStatus @default(open)
+  resolutionNote   String?
+  resolvedAt       DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([assignedToUserId, status])
+  @@index([raisedByUserId])
+}
