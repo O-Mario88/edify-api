@@ -78,6 +78,36 @@ export class BudgetService {
     return card;
   }
 
+  /** Cost preview for the scheduling drawer — the exact lines + total the CD
+   *  rate card (Country Cost Register) produces for an activity BEFORE it is
+   *  scheduled. Source of truth = official CostSetting rates; no manual cost.
+   *  A missing rate surfaces costMissing so the UI can warn + block fund use. */
+  async costPreview(input: {
+    activityType?: string; deliveryType?: string; districtType?: string;
+    teachersAttended?: number; leadersAttended?: number; otherParticipants?: number;
+  }) {
+    if (!input.activityType) throw new BadRequestException('activityType is required for a cost preview.');
+    const rates = await this.rateCard();
+    const cost = costForActivity(
+      {
+        activityType: input.activityType as CostableActivity['activityType'],
+        deliveryType: (input.deliveryType ?? 'staff') as CostableActivity['deliveryType'],
+        districtType: input.districtType,
+        teachersAttended: input.teachersAttended,
+        leadersAttended: input.leadersAttended,
+        otherParticipants: input.otherParticipants,
+      },
+      rates,
+    );
+    return {
+      source: `Uganda · FY ${getOperationalFY()} Country Cost Register`,
+      currency: 'UGX',
+      amount: cost.amount,
+      costMissing: cost.costMissing,
+      lines: cost.lines,
+    };
+  }
+
   // ── Activity scope (own work + work in own schools) ─────────────────────────
 
   private activityWhere(scope: UserScope): Prisma.ActivityWhereInput {

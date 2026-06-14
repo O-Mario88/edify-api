@@ -35,6 +35,16 @@ export class BudgetController {
     return this.budget.upsertCostSetting(user, body);
   }
 
+  /** Cost preview from the CD Country Cost Register — for the scheduling drawer.
+   *  Every planning role may preview; the rates themselves are CD-owned. */
+  @Post('costing/preview')
+  @RequirePermissions(PERMISSIONS.PLANNING_VIEW)
+  costPreview(
+    @Body() body: { activityType?: string; deliveryType?: string; districtType?: string; teachersAttended?: number; leadersAttended?: number; otherParticipants?: number },
+  ) {
+    return this.budget.costPreview(body);
+  }
+
   /** Annual budget from the caller's schedule + busy/slow-month intelligence. */
   @Get('from-schedule')
   @RequirePermissions(PERMISSIONS.PLANNING_VIEW)
