@@ -170,6 +170,13 @@ export class ActivitiesService {
     const activity = await this.prisma.activity.findUnique({ where: { id } });
     if (!activity) throw new NotFoundException('Activity not found');
     if (activity.status !== 'awaiting_ia_verification') throw new BadRequestException('Activity is not awaiting IA verification');
+    // Partner-delivered work must have its evidence reviewed + ACCEPTED before
+    // IA verifies — IA confirms verified delivery, not unreviewed uploads.
+    // (Staff work is auto-accepted on completion.) Payment is already gated on
+    // accepted evidence; this moves the gate earlier so IA can't confirm first.
+    if (activity.deliveryType === 'partner' && activity.evidenceStatus !== 'accepted') {
+      throw new BadRequestException('Evidence must be reviewed and accepted before IA verification.');
+    }
     // Object-level check (IA_VERIFY) + audit the sensitive verification.
     await this.authz.assertCanAccess(user, { kind: 'activity', id, loadedEntity: activity }, 'verify');
     const updated = await this.prisma.activity.update({

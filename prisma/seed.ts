@@ -490,6 +490,16 @@ async function seedDomains(rows: SchoolRow[], coord: Staff): Promise<string[]> {
     await prisma.partner.updateMany({ data: { isCertified: true, activeStatus: true } });
   }
 
+  // Round-trip link: the partner field officer (partner@edify.org) authenticates
+  // AS the first active partner, so the session resolves to this org's work via
+  // the canonical Partner.userId FK — not only the demo role-bridge fallback.
+  if (partnerIds.length) {
+    const partnerUser = await prisma.user.findUnique({ where: { email: 'partner@edify.org' }, select: { id: true } });
+    if (partnerUser) {
+      await prisma.partner.update({ where: { id: partnerIds[0] }, data: { userId: partnerUser.id } }).catch(() => undefined);
+    }
+  }
+
   if ((await prisma.costSetting.count()) === 0) {
     const COSTS = [
       { key: 'staff_visit_transport_primary', label: 'Staff visit transport (primary)', unitCost: 50000 },

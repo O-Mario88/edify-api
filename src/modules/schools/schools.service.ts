@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { AccountOwnerStatus, DuplicateStatus, Prisma, School, SchoolType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
+import { DomainEventService } from '../../common/realtime/domain-events.service';
 import { ScopeService, UserScope } from '../../common/scope/scope.service';
 import { paginate, Paginated } from '../../common/dto/pagination.dto';
 import { AuthUser } from '../../common/auth/auth-user';
@@ -17,6 +18,7 @@ export class SchoolsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly scope: ScopeService,
+    private readonly events: DomainEventService,
   ) {}
 
   // ── Single manual upload ──────────────────────────────────────────
@@ -170,17 +172,21 @@ export class SchoolsService {
       where: { isActive: true, roles: { hasSome: ['ImpactAssessment', 'CountryDirector', 'HumanResources'] } },
       select: { id: true },
     });
-    if (recipients.length) {
-      await this.prisma.notification.createMany({
-        data: recipients.map((r) => ({
-          recipientId: r.id, title: 'Unmatched account owner',
-          body: `${school.name} (${school.schoolId}) uploaded with owner "${school.accountOwnerNameRaw}" — needs mapping.`,
-          contextType: 'School', contextId: school.id, targetRoute: `/schools/${school.schoolId}`,
-          actionRequired: true, priority: 'high' as const,
-        })),
-      });
-    }
-    void actor;
+    if (!recipients.length) return;
+    // Route through DomainEventService (audit + DB notification + live SSE push)
+    // rather than a bare notification.createMany, so the unmatched-owner alert
+    // reaches IA/CD/HR in real time and is audited like every other workflow move.
+    await this.events.emit({
+      type: 'SchoolOwnerUnmatched', actorId: actor.userId, actorRole: actor.activeRole,
+      subjectKind: 'School', subjectId: school.id,
+      payload: { schoolId: school.schoolId, ownerRaw: school.accountOwnerNameRaw },
+      notify: recipients.map((r) => ({
+        recipientId: r.id, title: 'Unmatched account owner',
+        body: `${school.name} (${school.schoolId}) uploaded with owner "${school.accountOwnerNameRaw}" — needs mapping.`,
+        targetRoute: `/schools/${school.schoolId}`, actionRequired: true, priority: 'high' as const,
+      })),
+      liveUserIds: recipients.map((r) => r.id),
+    });
   }
 
   // ── Planning readiness: cluster + current FY SSA ──────────────────
