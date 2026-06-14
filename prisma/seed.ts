@@ -602,43 +602,25 @@ async function seedMessagesAndNotifications() {
 
 // ── Purge operational data (keep users + reference) ────────────────────────
 async function purgeOperational() {
-  await prisma.paymentDisbursement.deleteMany();
-  await prisma.paymentActionLog.deleteMany();
-  await prisma.paymentRequest.deleteMany();
-  await prisma.activityCompletionVerification.deleteMany();
-  await prisma.evidenceRecord.deleteMany();
-  await prisma.activityBudgetLine.deleteMany();
-  await prisma.annualPlanActivity.deleteMany();
-  await prisma.budgetApproval.deleteMany();
-  await prisma.budgetVersion.deleteMany();
-  await prisma.monthlyFundRequest.deleteMany();
-  await prisma.annualPlan.deleteMany();
-  await prisma.projectImpactSnapshot.deleteMany();
-  await prisma.projectPartnerAssignment.deleteMany();
-  await prisma.projectSchoolAssignment.deleteMany();
-  await prisma.activity.deleteMany();
-  await prisma.project.deleteMany();
-  await prisma.ssaScore.deleteMany();
-  await prisma.ssaRecord.deleteMany();
-  await prisma.schoolEnrollmentHistory.deleteMany();
-  await prisma.schoolClusterAssignment.deleteMany();
-  await prisma.schoolDuplicateCandidate.deleteMany();
-  await prisma.schoolAccountOwnerUploadMap.deleteMany();
-  await prisma.message.deleteMany();
-  await prisma.messageThread.deleteMany();
-  await prisma.notification.deleteMany();
-  await prisma.staffSchoolAssignment.deleteMany();
-  await prisma.staffSupervisorAssignment.deleteMany();
-  await prisma.staffGeographyAssignment.deleteMany();
-  await prisma.staffTargetProfile.deleteMany();
-  await prisma.school.deleteMany();
-  await prisma.clusterSubCounty.deleteMany();
-  await prisma.cluster.deleteMany();
-  await prisma.staffProfile.deleteMany();
-  await prisma.costSetting.deleteMany();
-  await prisma.uploadBatch.deleteMany();
-  await prisma.partner.deleteMany();
-  console.log('✓ purged operational data (kept users + reference)');
+  // Truncate every operational table (FK order handled by CASCADE), keeping
+  // users + the permission/geography reference data. Dynamic so newly-added
+  // tables (Leave, CdFlag, FundRequest, DailyDebrief, decision/budget-intel,
+  // payment, core-plan, …) are always purged — the old hand-ordered deleteMany
+  // list silently broke re-seed every time a table was added (Leave FK error).
+  const KEEP = new Set([
+    'User', 'Permission', 'RolePermission',
+    'Region', 'District', 'SubCounty', 'Parish',
+    '_prisma_migrations',
+  ]);
+  const rows = await prisma.$queryRaw<{ tablename: string }[]>`
+    SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+  `;
+  const targets = rows.map((r) => r.tablename).filter((t) => !KEEP.has(t));
+  if (targets.length) {
+    const list = targets.map((t) => `"public"."${t}"`).join(', ');
+    await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`);
+  }
+  console.log(`✓ purged ${targets.length} operational tables (kept users + reference)`);
 }
 
 async function main() {
