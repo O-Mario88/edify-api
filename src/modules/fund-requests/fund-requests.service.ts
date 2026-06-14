@@ -312,19 +312,32 @@ export class FundRequestsService {
     if (fr.accountabilityStatus === 'approved') {
       throw new ForbiddenException('Accountability is approved and locked. Ask the approver to return it before correcting the Netsuite ID.');
     }
+    // Validate + reconcile server-side — never trust the client figures. The
+    // NetSuite Expense ID is required (3-6 digits) and amountReturned is DERIVED
+    // (disbursed − spent), not accepted from the request.
+    if (!body.netsuiteId || !/^\d{3,6}$/.test(body.netsuiteId.trim())) {
+      throw new BadRequestException('A valid NetSuite Expense ID (3-6 digits) is required.');
+    }
+    const disbursed = fr.disbursedAmount ?? fr.totalAmount ?? 0;
+    const spent = Number(body.amountSpent ?? 0);
+    if (!Number.isFinite(spent) || spent < 0) throw new BadRequestException('Amount spent must be a non-negative number.');
+    if (spent > disbursed) throw new BadRequestException(`Amount spent (${ugx(spent)}) exceeds the disbursed amount (${ugx(disbursed)}).`);
+    const returned = Math.max(0, disbursed - spent);
     const updated = await this.prisma.fundRequest.update({
       where: { id },
       data: {
         accountabilityStatus: 'submitted',
-        accountedAmount: body.amountSpent,
-        returnedAmount: body.amountReturned,
-        accountabilityNetsuiteId: body.netsuiteId,
+        accountedAmount: spent,
+        returnedAmount: returned,
+        accountabilityNetsuiteId: body.netsuiteId.trim(),
         accountabilitySubmittedAt: new Date(),
       },
     });
     await this.audit.log({ action: 'fundRequest.accountabilitySubmitted', subjectKind: 'FundRequest', subjectId: id, actorId: user.userId, actorRole: user.activeRole, payload: { netsuiteId: body.netsuiteId ?? null, amountSpent: body.amountSpent ?? null } });
-    // Accountability is filed by the owner — notify their supervisor to review.
-    const accApprovers = await this.supervisorUserIds(user.staffProfileId);
+    // Notify the OWNER's supervisor to review (derive from the request's
+    // submitter, not the actor — correct even on the Admin-on-behalf path).
+    const ownerProfile = await this.prisma.staffProfile.findUnique({ where: { userId: fr.submittedByUserId }, select: { id: true } });
+    const accApprovers = await this.supervisorUserIds(ownerProfile?.id);
     await this.events.notifyOnly({
       type: 'FundRequest.AccountabilitySubmitted', subjectKind: 'FundRequest', subjectId: id, actorId: user.userId,
       notify: accApprovers.map((rid) => ({
@@ -344,6 +357,15 @@ export class FundRequestsService {
     const fr = await this.prisma.fundRequest.findUnique({ where: { id } });
     if (!fr) throw new NotFoundException('Fund request not found');
     if (fr.accountabilityStatus !== 'submitted') throw new BadRequestException('No submitted accountability to review.');
+    // Same chain invariant as review(): you never approve your OWN close-out, and
+    // you may only review accountability from a submitter you directly supervise.
+    if (fr.submittedByUserId === user.userId) {
+      throw new ForbiddenException('You cannot review your own accountability — it routes to your supervisor.');
+    }
+    const supervised = await this.supervisedUserIds(user);
+    if (!supervised.includes(fr.submittedByUserId)) {
+      throw new ForbiddenException('You can only review accountability from staff you supervise.');
+    }
     // Status stays "disbursed" (no "closed" in the FundRequestStatus enum); the
     // accountability sub-status carries the approve/return outcome.
     const updated = await this.prisma.fundRequest.update({

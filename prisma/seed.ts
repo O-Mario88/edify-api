@@ -146,7 +146,14 @@ async function seedStaff(districtIds: string[]) {
     { email: 'coordinator@edify.org', name: 'Allan Ssentongo', role: 'ProjectCoordinator' },
     { email: 'partner@edify.org', name: 'Literacy Uganda Officer', role: 'PartnerFieldOfficer' },
   ];
-  for (const u of baseUsers) await prisma.user.upsert({ where: { email: u.email }, update: { name: u.name, roles: [u.role], activeRole: u.role }, create: { email: u.email, name: u.name, passwordHash: hash, roles: [u.role], activeRole: u.role } });
+  // The privileged admin account is not seeded in production unless explicitly
+  // enabled (mirrors the FE ENABLE_DEMO_ADMIN gate) — so a forged admin cookie
+  // can't mint a backend admin token in a hosted test.
+  const adminEnabled = process.env.ENABLE_DEMO_ADMIN === 'true' || process.env.NODE_ENV !== 'production';
+  for (const u of baseUsers) {
+    if (u.email === 'admin@edify.org' && !adminEnabled) continue;
+    await prisma.user.upsert({ where: { email: u.email }, update: { name: u.name, roles: [u.role], activeRole: u.role }, create: { email: u.email, name: u.name, passwordHash: hash, roles: [u.role], activeRole: u.role } });
+  }
 
   // Project Coordinator gets a staff profile (so coordinator activities show in My Plan).
   const coordUser = await prisma.user.findUniqueOrThrow({ where: { email: 'coordinator@edify.org' } });

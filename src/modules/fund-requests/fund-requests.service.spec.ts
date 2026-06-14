@@ -25,7 +25,7 @@ function svc(opts: { fr?: Fr | null; supLinks?: { superviseeId: string }[]; supP
       create: vi.fn(async (a: { data: Record<string, unknown> }) => ({ id: 'fr1', ...a.data })),
     },
     staffSupervisorAssignment: { findMany: vi.fn(async () => opts.supLinks ?? []) },
-    staffProfile: { findMany: vi.fn(async () => opts.supProfiles ?? []) },
+    staffProfile: { findMany: vi.fn(async () => opts.supProfiles ?? []), findUnique: vi.fn(async () => ({ id: 'ownerStaff' })) },
     user: { findUnique: vi.fn(async () => ({ name: 'Sub' })), findMany: vi.fn(async () => []) },
   };
   const scope = { resolveUserScope: vi.fn() };
@@ -114,12 +114,24 @@ describe('FundRequestsService.submitAccountability — owner-only + NetSuite-ID 
     expect(prisma.fundRequest.update).not.toHaveBeenCalled();
   });
 
-  it('the owner submits accountability on a disbursed request', async () => {
-    const { s, prisma } = svc({ fr: { id: 'fr1', status: 'disbursed', submittedByUserId: 'u1', periodKey: 'FY2026-M6', accountabilityStatus: 'none' } });
+  it('the owner submits accountability on a disbursed request (amounts reconciled server-side)', async () => {
+    const { s, prisma } = svc({ fr: { id: 'fr1', status: 'disbursed', submittedByUserId: 'u1', periodKey: 'FY2026-M6', accountabilityStatus: 'none', disbursedAmount: 1000 } });
     await s.submitAccountability(makeUser('CCEO'), 'fr1', { netsuiteId: '6161', amountSpent: 900 });
     const data = prisma.fundRequest.update.mock.calls[0][0].data;
     expect(data.accountabilityStatus).toBe('submitted');
     expect(data.accountabilityNetsuiteId).toBe('6161');
+    expect(data.accountedAmount).toBe(900);
+    expect(data.returnedAmount).toBe(100); // 1000 disbursed − 900 spent, derived
+  });
+
+  it('rejects accountability whose spend exceeds the disbursed amount', async () => {
+    const { s } = svc({ fr: { id: 'fr1', status: 'disbursed', submittedByUserId: 'u1', accountabilityStatus: 'none', disbursedAmount: 1000 } });
+    await expect(s.submitAccountability(makeUser('CCEO'), 'fr1', { netsuiteId: '6161', amountSpent: 5000 })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects accountability with a malformed NetSuite ID', async () => {
+    const { s } = svc({ fr: { id: 'fr1', status: 'disbursed', submittedByUserId: 'u1', accountabilityStatus: 'none', disbursedAmount: 1000 } });
+    await expect(s.submitAccountability(makeUser('CCEO'), 'fr1', { netsuiteId: 'NOPE', amountSpent: 500 })).rejects.toBeInstanceOf(BadRequestException);
   });
 });
 
@@ -134,8 +146,21 @@ describe('FundRequestsService.reviewAccountability', () => {
     await expect(s.reviewAccountability(makeUser('CountryProgramLead'), 'fr1', 'approve')).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('a supervisor approves a submitted accountability', async () => {
-    const { s, prisma } = svc({ fr: { id: 'fr1', accountabilityStatus: 'submitted', submittedByUserId: 'sub1', periodKey: 'FY2026-M6' } });
+  it('cannot approve your OWN accountability', async () => {
+    const { s } = svc({ fr: { id: 'fr1', accountabilityStatus: 'submitted', submittedByUserId: 'u1' } });
+    await expect(s.reviewAccountability(makeUser('CountryProgramLead'), 'fr1', 'approve')).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('cannot review accountability outside your supervision chain', async () => {
+    const { s } = svc({ fr: { id: 'fr1', accountabilityStatus: 'submitted', submittedByUserId: 'other' }, supLinks: [], supProfiles: [] });
+    await expect(s.reviewAccountability(makeUser('CountryProgramLead'), 'fr1', 'approve')).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('a supervisor approves a SUPERVISED submitted accountability', async () => {
+    const { s, prisma } = svc({
+      fr: { id: 'fr1', accountabilityStatus: 'submitted', submittedByUserId: 'sub1', periodKey: 'FY2026-M6' },
+      supLinks: [{ superviseeId: 'staffSub' }], supProfiles: [{ userId: 'sub1' }],
+    });
     await s.reviewAccountability(makeUser('CountryProgramLead'), 'fr1', 'approve');
     const data = prisma.fundRequest.update.mock.calls[0][0].data;
     expect(data.accountabilityStatus).toBe('approved');
