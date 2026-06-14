@@ -35,6 +35,13 @@ export class BudgetController {
     return this.budget.upsertCostSetting(user, body);
   }
 
+  /** Versioned change history for the Country Cost Register (old→new, who, when). */
+  @Get('cost-settings/history')
+  @RequirePermissions(PERMISSIONS.PLANNING_VIEW)
+  costSettingHistory(@Query('key') key?: string) {
+    return this.budget.costSettingHistory(key);
+  }
+
   /** Cost preview from the CD Country Cost Register — for the scheduling drawer.
    *  Every planning role may preview; the rates themselves are CD-owned. */
   @Post('costing/preview')

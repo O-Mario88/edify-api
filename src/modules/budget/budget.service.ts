@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ScopeService, UserScope } from '../../common/scope/scope.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { getOperationalFY } from '../../common/fy/fy.util';
+import { AuditService } from '../../common/audit/audit.service';
 import { costForActivity, RateCard, CostableActivity } from './costing';
 
 // ── Budget = the schedule, costed ────────────────────────────────────────────
@@ -35,7 +36,11 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 
 @Injectable()
 export class BudgetService {
-  constructor(private readonly prisma: PrismaService, private readonly scope: ScopeService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scope: ScopeService,
+    private readonly audit: AuditService,
+  ) {}
 
   // ── Rate card ──────────────────────────────────────────────────────────────
 
@@ -57,18 +62,48 @@ export class BudgetService {
 
   /** CD upserts a single rate by key. Guarded by COST_SETTINGS_MANAGE at the
    *  controller — this is the only way official costs are set. */
-  async upsertCostSetting(user: AuthUser, body: { key?: string; label?: string; unitCost?: number; fy?: string }) {
+  async upsertCostSetting(user: AuthUser, body: { key?: string; label?: string; unitCost?: number; fy?: string; reason?: string }) {
     const key = (body.key ?? '').trim();
     if (!key) throw new BadRequestException('key is required');
     if (typeof body.unitCost !== 'number' || body.unitCost < 0)
       throw new BadRequestException('unitCost must be a non-negative number');
     const label = (body.label ?? key).trim();
+
+    // Versioned register: bump the version on a real rate change and append an
+    // immutable history row (old→new, who, when, why). Past budgets keep their
+    // snapshotted ActivityBudgetLine.unitCost, so they never change retroactively.
+    const existing = await this.prisma.costSetting.findUnique({ where: { key } });
+    const changed = !existing || existing.unitCost !== body.unitCost;
+    const version = existing ? existing.version + (changed ? 1 : 0) : 1;
+
     const saved = await this.prisma.costSetting.upsert({
       where: { key },
-      create: { key, label, unitCost: body.unitCost, fy: body.fy ?? null, createdBy: user.userId },
-      update: { label, unitCost: body.unitCost, ...(body.fy !== undefined ? { fy: body.fy } : {}) },
+      create: { key, label, unitCost: body.unitCost, fy: body.fy ?? null, version: 1, createdBy: user.userId },
+      update: { label, unitCost: body.unitCost, version, ...(body.fy !== undefined ? { fy: body.fy } : {}) },
     });
-    return { ok: true, setting: { id: saved.id, key: saved.key, label: saved.label, unitCost: saved.unitCost } };
+
+    if (changed) {
+      await this.prisma.costSettingHistory.create({
+        data: {
+          key, label, oldUnitCost: existing?.unitCost ?? null, newUnitCost: body.unitCost,
+          version, fy: saved.fy, changedByUserId: user.userId, reason: body.reason?.trim() || null,
+        },
+      });
+      await this.audit.log({
+        action: 'costRegister.rateChanged', subjectKind: 'CostSetting', subjectId: saved.id,
+        actorId: user.userId, actorRole: user.activeRole,
+        payload: { key, oldUnitCost: existing?.unitCost ?? null, newUnitCost: body.unitCost, version, reason: body.reason ?? null },
+      });
+    }
+    return { ok: true, setting: { id: saved.id, key: saved.key, label: saved.label, unitCost: saved.unitCost, version: saved.version } };
+  }
+
+  /** Versioned change history for one rate (or the whole register). */
+  async costSettingHistory(key?: string) {
+    const rows = await this.prisma.costSettingHistory.findMany({
+      where: key ? { key } : {}, orderBy: { changedAt: 'desc' }, take: 200,
+    });
+    return { history: rows, count: rows.length };
   }
 
   private async rateCard(): Promise<RateCard> {

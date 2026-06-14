@@ -1063,9 +1063,30 @@ model CostSetting {
   label     String
   unitCost  Float
   fy        String?
+  version   Int      @default(1) // bumped on every rate change (CountryCostRegister versioning)
   createdBy String?  // CD userId
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Versioned, append-only change history for the CD Country Cost Register. Every
+// rate change records old→new, who, when and why, so past budgets (which snapshot
+// unitCost on the ActivityBudgetLine) can always be reconciled to the version
+// that produced them.
+model CostSettingHistory {
+  id              String   @id @default(cuid())
+  key             String
+  label           String
+  oldUnitCost     Float?   // null on first create
+  newUnitCost     Float
+  version         Int      // the new version after this change
+  fy              String?
+  changedByUserId String
+  reason          String?
+  changedAt       DateTime @default(now())
+
+  @@index([key])
+  @@index([changedAt])
 }
 
 // ─────────────────────── Special projects ───────────────────────
