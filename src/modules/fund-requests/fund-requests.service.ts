@@ -143,9 +143,20 @@ export class FundRequestsService {
       submittedBy: nameOf(r.submittedByUserId), submittedByRole: r.submittedByRole,
       totalAmount: r.totalAmount, activityCount: r.activityCount, status: r.status,
       reviewedAt: r.reviewedAt, reviewNote: r.reviewNote, createdAt: r.createdAt,
+      // Disbursement + accountability back-half (drives the owner's close-out
+      // form + the supervisor's account-review buttons).
+      disbursedAmount: r.disbursedAmount, accountabilityStatus: r.accountabilityStatus,
+      accountedAmount: r.accountedAmount, returnedAmount: r.returnedAmount,
+      accountabilityNetsuiteId: r.accountabilityNetsuiteId,
+      // Mine to act on as the OWNER (submit accountability): a disbursed request
+      // I submitted, not yet approved-and-locked.
+      isOwn: r.submittedByUserId === user.userId,
       // True only when this row is from someone you supervise AND still open —
       // so the list never offers "Approve" on your own escalated request.
       canReview: supervisedSet.has(r.submittedByUserId) && r.status === 'submitted',
+      // True when you supervise this submitter AND they've filed accountability
+      // awaiting your approve/return.
+      canAccountReview: supervisedSet.has(r.submittedByUserId) && r.status === 'disbursed' && r.accountabilityStatus === 'submitted',
     }));
   }
 
