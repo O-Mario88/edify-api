@@ -234,6 +234,12 @@ export class FundRequestsService {
       throw new ForbiddenException('Only the requester accounts for their own funds.');
     }
     if (fr.status !== 'disbursed') throw new BadRequestException(`Accountability needs a disbursed request (is ${fr.status}).`);
+    // ID-integrity lock: once an approver has confirmed the accountability, the
+    // Netsuite ID + amounts are frozen. A correction requires the approver to
+    // RETURN it first (the only path back to a submittable state).
+    if (fr.accountabilityStatus === 'approved') {
+      throw new ForbiddenException('Accountability is approved and locked. Ask the approver to return it before correcting the Netsuite ID.');
+    }
     const updated = await this.prisma.fundRequest.update({
       where: { id },
       data: {

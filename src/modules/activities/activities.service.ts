@@ -119,6 +119,12 @@ export class ActivitiesService {
     const activity = await this.prisma.activity.findUnique({ where: { id } });
     if (!activity) throw new NotFoundException('Activity not found');
     await this.assertInScope(activity, user);
+    // ID-integrity lock: once IA has confirmed, the Salesforce ID is frozen. A
+    // correction requires IA to RETURN the activity first (resets the status),
+    // so a confirmed verification can never be silently overwritten.
+    if (activity.iaVerificationStatus === 'confirmed') {
+      throw new ForbiddenException('Salesforce ID is locked after IA confirmation. Ask IA to return the activity to make a correction.');
+    }
     const kind = sfKind(activity.activityType);
     if (!isValidSalesforceId(dto.salesforceId, kind)) {
       throw new BadRequestException(`${kind === 'visit' ? 'SV-' : 'TS-'} Salesforce ID required`);

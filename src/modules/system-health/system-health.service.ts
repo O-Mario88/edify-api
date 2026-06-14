@@ -27,6 +27,8 @@ export class SystemHealthService {
       noOwner, noCluster, noSsa, unmatched, dupes,
       activitiesNoLink, staffNoSupervisor, staffNoPrimaryDistrict,
       paymentsNoIa, paidWithoutIa,
+      paidWithoutEvidence, paidWithoutSalesforce, accountabilityApprovedNoNetsuite,
+      quarantinedEvidence,
     ] = await Promise.all([
       this.prisma.school.count({ where: { deletedAt: null, accountOwnerId: null } }),
       this.prisma.school.count({ where: { deletedAt: null, clusterId: null } }),
@@ -42,6 +44,14 @@ export class SystemHealthService {
       // INVARIANT: no payment without IA confirmation. An activity that is
       // cleared/paid while NOT IA-confirmed is a hard integrity violation.
       this.prisma.activity.count({ where: { deletedAt: null, paymentStatus: { in: ['accountant_cleared', 'paid'] }, iaVerificationStatus: { not: 'confirmed' } } }),
+      // INVARIANT: a paid partner activity must have accepted evidence.
+      this.prisma.activity.count({ where: { deletedAt: null, deliveryType: 'partner', paymentStatus: { in: ['accountant_cleared', 'paid'] }, evidenceStatus: { not: 'accepted' } } }),
+      // INVARIANT: a paid partner activity must carry a Salesforce ID.
+      this.prisma.activity.count({ where: { deletedAt: null, deliveryType: 'partner', paymentStatus: { in: ['accountant_cleared', 'paid'] }, salesforceActivityId: null } }),
+      // INVARIANT: an approved accountability must record a Netsuite ID.
+      this.prisma.fundRequest.count({ where: { accountabilityStatus: 'approved', accountabilityNetsuiteId: null } }),
+      // Quarantined evidence (failed malware scan) — surfaced for the dashboard.
+      this.prisma.evidenceRecord.count({ where: { quarantined: true } }),
     ]);
 
     add('schools-without-account-owner', 'warning', noOwner, 'Schools without an account owner');
@@ -54,6 +64,10 @@ export class SystemHealthService {
     add('staff-without-primary-district', 'warning', staffNoPrimaryDistrict, 'Active staff with no primary district');
     add('payments-without-ia-confirmation', 'info', paymentsNoIa, 'Payment requests still awaiting IA confirmation');
     add('paid-activities-bypassing-ia', 'error', paidWithoutIa, 'Activities cleared/paid without IA confirmation (payment must never bypass verification)');
+    add('paid-without-accepted-evidence', 'error', paidWithoutEvidence, 'Partner activities paid without accepted evidence');
+    add('paid-without-salesforce-id', 'error', paidWithoutSalesforce, 'Partner activities paid without a Salesforce ID');
+    add('accountability-approved-without-netsuite', 'error', accountabilityApprovedNoNetsuite, 'Approved accountability with no Netsuite ID recorded');
+    add('quarantined-evidence', 'warning', quarantinedEvidence, 'Evidence files quarantined by the malware scan');
 
     // ── Cluster + planning integrity (§21) ──────────────────────────
     const [clustersNoSchools, mismatch, planningReadyButUnclustered] = await Promise.all([
