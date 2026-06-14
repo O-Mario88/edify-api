@@ -66,16 +66,19 @@ export function validateEnv(config: Record<string, unknown>) {
     throw new Error(`Invalid environment:\n${errors.map((e) => Object.values(e.constraints ?? {}).join(', ')).join('\n')}`);
   }
 
-  // Production safety rails: mock data + dev endpoints must be OFF in prod.
+  // Production safety rails — collect ALL violations so boot logs (and the
+  // prod-readiness gate) report every blocker at once, not one at a time.
   if (parsed.NODE_ENV === 'production') {
-    if (parsed.ENABLE_MOCK_DATA) throw new Error('ENABLE_MOCK_DATA must be false in production.');
-    if (parsed.ENABLE_DEV_ENDPOINTS) throw new Error('ENABLE_DEV_ENDPOINTS must be false in production.');
+    const issues: string[] = [];
+    if (parsed.ENABLE_MOCK_DATA) issues.push('ENABLE_MOCK_DATA must be false in production.');
+    if (parsed.ENABLE_DEV_ENDPOINTS) issues.push('ENABLE_DEV_ENDPOINTS must be false in production.');
     if (parsed.JWT_SECRET.length < 16 || parsed.JWT_SECRET.includes('change-me') || parsed.JWT_SECRET.includes('dev-only')) {
-      throw new Error('A strong JWT_SECRET is required in production.');
+      issues.push('A strong JWT_SECRET is required in production.');
     }
     if (parsed.AUTHZ_MODE !== 'enforce') {
-      throw new Error('AUTHZ_MODE must be "enforce" in production (object-level authorization cannot run in shadow).');
+      issues.push('AUTHZ_MODE must be "enforce" in production (object-level authorization cannot run in shadow).');
     }
+    if (issues.length) throw new Error(`Production environment is not safe:\n${issues.join('\n')}`);
   }
   return parsed;
 }
