@@ -436,7 +436,22 @@ export class LeadershipEngineService {
       if (total < 5) continue;
       const owners = await this.prisma.school.findMany({ where: { deletedAt: null, regionId: r.id, accountOwnerId: { not: null } }, select: { accountOwnerId: true }, distinct: ['accountOwnerId'] });
       const staffCount = owners.length;
-      const partners = await this.prisma.partner.count({ where: { deletedAt: null, activeStatus: true, coverageDistricts: { hasSome: [r.name] } } });
+      // Partner coverage is recorded as DISTRICT names (Partner.coverageDistricts)
+      // plus an optional Partner.regionName — NEVER a region name inside
+      // coverageDistricts. Match the region's actual districts (or regionName),
+      // not r.name, or this count is structurally ~0 and the board would always
+      // recommend "add staff" and never "add partner support".
+      const districtNames = (await this.prisma.district.findMany({ where: { regionId: r.id }, select: { name: true } })).map((d) => d.name);
+      const partners = await this.prisma.partner.count({
+        where: {
+          deletedAt: null,
+          activeStatus: true,
+          OR: [
+            { regionName: r.name },
+            { coverageDistricts: { hasSome: districtNames.length ? districtNames : ['__none__'] } },
+          ],
+        },
+      });
       const schoolsPerStaff = staffCount ? total / staffCount : total;
 
       const conf = combineConfidence([
