@@ -54,6 +54,7 @@ export class BudgetService {
         label: r.label,
         unitCost: r.unitCost,
         fy: r.fy,
+        version: r.version,
         updatedAt: r.updatedAt,
       })),
       count: rows.length,
