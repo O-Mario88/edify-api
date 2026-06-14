@@ -18,6 +18,7 @@ import { costForActivity, RateCard, CostableActivity } from './costing';
 const BUDGETABLE_STATUSES: ActivityStatus[] = [
   ActivityStatus.planned,
   ActivityStatus.scheduled,
+  ActivityStatus.rescheduled, // a moved activity is still committed, funded work
   ActivityStatus.assigned_to_partner,
   ActivityStatus.partner_scheduled,
   ActivityStatus.in_progress,

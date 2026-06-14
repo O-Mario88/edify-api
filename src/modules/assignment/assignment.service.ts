@@ -13,8 +13,11 @@ import { getOperationalFY } from '../../common/fy/fy.util';
 
 export const STAFF_SUPPORT_LIMIT_DEFAULT = 50;
 
-// Activity statuses that DON'T count toward direct support (not yet committed work).
-const EXCLUDED_STATUS: ActivityStatus[] = ['rejected', 'returned', 'rescheduled'];
+// Activity statuses that DON'T count toward direct support (not yet committed
+// work). `rescheduled` IS committed (it was merely moved), so it must keep
+// counting toward capacity — excluding it let a staffer be silently re-loaded
+// past their direct-support limit and dropped the activity from budget/planning.
+const EXCLUDED_STATUS: ActivityStatus[] = ['rejected', 'returned'];
 
 export interface StaffCapacity {
   staffId: string;

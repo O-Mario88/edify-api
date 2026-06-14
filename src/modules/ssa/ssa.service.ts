@@ -49,10 +49,21 @@ export class SsaService {
     const quarter = getQuarterForDate(date);
     const average = Math.round((dto.scores.reduce((s, x) => s + x.score, 0) / dto.scores.length) * 10) / 10;
 
+    // Collection provenance drives the QA workflow: staff/IA-collected SSA is
+    // auto-verified (the uploader IS the verification authority), partner-
+    // collected SSA lands `pending` until staff/IA confirm it. Without this the
+    // record defaulted to pending/staff and the 10% client-QA metric counted 0
+    // verified for EVERY staff the moment real uploads replaced the seed.
+    const partnerCollected = dto.collectorType === 'partner';
     const record = await this.prisma.ssaRecord.create({
       data: {
         schoolId: school.id, dateOfSsa: date, fy, quarter, newEnrollment: dto.newEnrollment,
         averageScore: average, uploadedBy: user.userId,
+        collectorType: partnerCollected ? 'partner' : 'staff',
+        collectedByUserId: user.userId,
+        verificationStatus: partnerCollected ? 'pending' : 'confirmed',
+        verificationSource: partnerCollected ? 'partner_submitted' : 'staff_self_verified',
+        ...(partnerCollected ? {} : { verifiedByUserId: user.userId, verifiedAt: new Date() }),
         scores: { create: dto.scores.map((s) => ({ intervention: s.intervention, score: s.score })) },
       },
       include: { scores: true },

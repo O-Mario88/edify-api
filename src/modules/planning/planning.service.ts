@@ -51,7 +51,7 @@ export class PlanningService {
           deletedAt: null,
           status: {
             in: [
-              'planned', 'scheduled', 'assigned_to_partner', 'partner_scheduled',
+              'planned', 'scheduled', 'rescheduled', 'assigned_to_partner', 'partner_scheduled',
               'in_progress', 'evidence_uploaded', 'evidence_accepted',
               'salesforce_id_required', 'awaiting_ia_verification', 'ia_verified',
               'accountant_confirmed',
