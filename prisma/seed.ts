@@ -26,7 +26,7 @@ import * as bcrypt from 'bcryptjs';
 import { mkdirSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import { ROLE_PERMISSIONS } from '../src/common/rbac/permissions';
-import { UGANDA_GEOGRAPHY } from './geography-data';
+import { UGANDA_GEOGRAPHY, DISTRICT_CENTROIDS } from './geography-data';
 
 const prisma = new PrismaClient();
 const MOCK = ['1', 'true', 'yes'].includes((process.env.ENABLE_MOCK_DATA ?? '').toLowerCase());
@@ -98,9 +98,11 @@ async function seedGeography(): Promise<ScRow[]> {
   for (const region of UGANDA_GEOGRAPHY) {
     const reg = await prisma.region.upsert({ where: { name: region.name }, update: {}, create: { name: region.name } });
     for (const district of region.districts) {
+      const cc = DISTRICT_CENTROIDS[district.name];
       const dist = await prisma.district.upsert({
         where: { regionId_name: { regionId: reg.id, name: district.name } },
-        update: { regionId: reg.id }, create: { name: district.name, regionId: reg.id },
+        update: { regionId: reg.id, latitude: cc?.lat, longitude: cc?.lng },
+        create: { name: district.name, regionId: reg.id, latitude: cc?.lat, longitude: cc?.lng },
       });
       for (const sc of district.subCounties) {
         const sub = await prisma.subCounty.create({ data: { name: sc.name, districtId: dist.id, seeded: false } });

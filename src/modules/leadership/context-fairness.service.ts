@@ -33,6 +33,17 @@ export class ContextFairnessService {
     });
     if (!staff.length) return 0;
 
+    // District centroids (approx) for the travel-burden spread. A covered
+    // district without coords counts as missing travel data for that staffer,
+    // so distanceBurden stays honest ("insufficient data") until geocoded.
+    const districtRows = await this.prisma.district.findMany({
+      where: { latitude: { not: null }, longitude: { not: null } },
+      select: { id: true, latitude: true, longitude: true },
+    });
+    const centroid = new Map<string, { lat: number; lng: number }>(
+      districtRows.map((d) => [d.id, { lat: d.latitude as number, lng: d.longitude as number }]),
+    );
+
     const acts = await this.prisma.activity.findMany({
       where: { deletedAt: null, fy, responsibleStaffId: { not: null } },
       select: {
@@ -55,8 +66,15 @@ export class ContextFairnessService {
       const schoolLoad = schools.length;
       const coreSchoolLoad = schools.filter((sc) => sc.schoolType === 'core' || sc.schoolType === 'potential_core').length;
       const clientSchoolLoad = schools.filter((sc) => sc.schoolType === 'client').length;
-      const districtSpread = new Set(schools.map((sc) => sc.districtId)).size;
+      const coveredDistricts = [...new Set(schools.map((sc) => sc.districtId))];
+      const districtSpread = coveredDistricts.length;
       const subCountySpread = new Set(schools.map((sc) => sc.subCountyId).filter(Boolean)).size;
+
+      // Real travel burden: haversine spread across the staff's covered district
+      // centroids. Null when none of the covered districts are geocoded.
+      const coords = coveredDistricts.map((id) => centroid.get(id)).filter((c): c is { lat: number; lng: number } => !!c);
+      const distanceBurden = coords.length ? travelBurden(coords) : null;
+      const travelRatio = coveredDistricts.length ? coords.length / coveredDistricts.length : 0;
 
       const mine = byStaff.get(s.id) ?? [];
       const partnerManagementLoad = new Set(mine.map((a) => a.assignedPartnerId).filter(Boolean)).size;
@@ -72,10 +90,15 @@ export class ContextFairnessService {
       const partnerScore = clamp01(partnerManagementLoad / REF_PARTNERS_PER_STAFF);
       const spreadScore = clamp01((Math.max(districtSpread, 1) - 1) / 4); // 5+ districts = max
       const projectScore = clamp01(projectLoad / 3);
+      // The geographic difficulty term is the greater of count-spread and the
+      // REAL distance burden — so a staffer covering far-apart districts scores
+      // higher than one covering the same count of adjacent districts.
+      const travelScore = distanceBurden != null ? distanceBurden / 100 : 0;
+      const geoTerm = Math.max(spreadScore, travelScore);
       const contextDifficultyScore = clamp100(
-        (loadScore * 0.35 + coreScore * 0.2 + partnerScore * 0.15 + spreadScore * 0.2 + projectScore * 0.1) * 100,
+        (loadScore * 0.35 + coreScore * 0.2 + partnerScore * 0.15 + geoTerm * 0.2 + projectScore * 0.1) * 100,
       );
-      const geographyDifficulty = clamp100(spreadScore * 100);
+      const geographyDifficulty = clamp100(geoTerm * 100);
 
       // Context data-confidence: deliberately dragged down by the two ABSENT
       // dimensions so leadership sees the fairness model is partially blind.
@@ -83,7 +106,7 @@ export class ContextFairnessService {
         { label: 'Workload inputs', ratio: 1, weight: 2 },
         { label: 'Geographic spread', ratio: 1, weight: 1 },
         { label: 'Rural/urban classification', ratio: 0, weight: 0.75 },
-        { label: 'Travel distance', ratio: 0, weight: 0.75 },
+        { label: 'Travel distance', ratio: travelRatio, weight: 0.75 },
       ]).score;
 
       await this.prisma.staffContextProfile.upsert({
@@ -91,7 +114,7 @@ export class ContextFairnessService {
         update: {
           schoolLoad, clientSchoolLoad, coreSchoolLoad, partnerManagementLoad, projectLoad,
           districtSpread, subCountySpread, rescheduleLoad, evidenceBacklog,
-          geographyDifficulty, ruralityScore: null, distanceBurden: null,
+          geographyDifficulty, ruralityScore: null, distanceBurden,
           teamContributionScore: 0, contextDifficultyScore, dataConfidence,
           computedAt: new Date(),
         },
@@ -99,11 +122,38 @@ export class ContextFairnessService {
           staffId: s.id, fy, quarter: 'FY',
           schoolLoad, clientSchoolLoad, coreSchoolLoad, partnerManagementLoad, projectLoad,
           districtSpread, subCountySpread, rescheduleLoad, evidenceBacklog,
-          geographyDifficulty, ruralityScore: null, distanceBurden: null,
+          geographyDifficulty, ruralityScore: null, distanceBurden,
           teamContributionScore: 0, contextDifficultyScore, dataConfidence,
         },
       });
     }
     return staff.length;
   }
+}
+
+// Haversine distance (km) between two lat/lng points.
+function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const R = 6371;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const la1 = (a.lat * Math.PI) / 180;
+  const la2 = (b.lat * Math.PI) / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+// Travel burden 0..100 = max pairwise distance across a staff member's covered
+// district centroids, normalized against a ~400km national reference span. One
+// district (or fewer than two geocoded) = 0 burden.
+const TRAVEL_REF_KM = 400;
+function travelBurden(points: { lat: number; lng: number }[]): number {
+  if (points.length < 2) return 0;
+  let max = 0;
+  for (let i = 0; i < points.length; i++) {
+    for (let j = i + 1; j < points.length; j++) {
+      const d = haversineKm(points[i], points[j]);
+      if (d > max) max = d;
+    }
+  }
+  return Math.max(0, Math.min(100, (max / TRAVEL_REF_KM) * 100));
 }

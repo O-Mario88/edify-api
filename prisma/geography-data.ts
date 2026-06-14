@@ -219,3 +219,26 @@ export function geographyRows(): {
   }
   return rows;
 }
+
+// Approximate district centroids (lat, lng) for the 16 seeded districts. Real,
+// public coordinates — used by the Leadership context-fairness travel-burden
+// model (haversine spread across a staff member's covered districts). A
+// district absent here keeps null coords ⇒ "insufficient data" for that staffer.
+export const DISTRICT_CENTROIDS: Record<string, { lat: number; lng: number }> = {
+  Lira: { lat: 2.2499, lng: 32.8999 },
+  Gulu: { lat: 2.7666, lng: 32.3056 },
+  Kitgum: { lat: 3.2783, lng: 32.8867 },
+  Apac: { lat: 1.9759, lng: 32.535 },
+  Mbale: { lat: 1.0644, lng: 34.1797 },
+  Soroti: { lat: 1.7146, lng: 33.6111 },
+  Tororo: { lat: 0.6928, lng: 34.1808 },
+  Jinja: { lat: 0.425, lng: 33.2039 },
+  Kampala: { lat: 0.3476, lng: 32.5825 },
+  Wakiso: { lat: 0.4045, lng: 32.4596 },
+  Mukono: { lat: 0.3533, lng: 32.7553 },
+  Masaka: { lat: -0.334, lng: 31.734 },
+  Mbarara: { lat: -0.6072, lng: 30.6545 },
+  Kabale: { lat: -1.249, lng: 29.9899 },
+  Kabarole: { lat: 0.671, lng: 30.275 },
+  Bushenyi: { lat: -0.5427, lng: 30.187 },
+};

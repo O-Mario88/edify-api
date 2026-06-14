@@ -347,7 +347,7 @@ export class LeadershipEngineService {
       where: { fy, quarter: 'FY' },
       select: {
         staffId: true, schoolLoad: true, coreSchoolLoad: true, partnerManagementLoad: true,
-        districtSpread: true, contextDifficultyScore: true, dataConfidence: true,
+        districtSpread: true, distanceBurden: true, contextDifficultyScore: true, dataConfidence: true,
         staff: { select: { user: { select: { name: true } } } },
       },
     });
@@ -420,7 +420,9 @@ export class LeadershipEngineService {
           { metricName: 'Raw target achievement', metricValue: `${Math.round(rawAchievement)}%`, sourceType: 'targets', weight: 'primary', tone: rawAchievement < 55 ? 'red' : rawAchievement < 80 ? 'amber' : 'green' },
           { metricName: 'Context difficulty', metricValue: `${Math.round(difficulty)}/100`, sourceType: 'workload', weight: 'primary', tone: highDifficulty ? 'amber' : 'green', explanation: `${p.schoolLoad} schools, ${p.coreSchoolLoad} core, ${p.partnerManagementLoad} partners, ${p.districtSpread} districts.` },
           { metricName: 'Execution quality (evidence accepted)', metricValue: `${Math.round(executionQuality)}%`, sourceType: 'workload', weight: 'supporting', tone: executionQuality < 70 ? 'red' : 'green' },
-          { metricName: 'Rural/urban + travel context', metricValue: 'Insufficient data', sourceType: 'workload', weight: 'context', tone: 'amber', explanation: 'No rural/urban classification or travel-distance data yet — fairness is partial.' },
+          p.distanceBurden != null
+            ? { metricName: 'Travel burden (district spread)', metricValue: `${Math.round(p.distanceBurden)}/100`, sourceType: 'workload', weight: 'context' as const, tone: (p.distanceBurden >= 60 ? 'amber' : 'green') as 'amber' | 'green', explanation: 'Haversine spread across the staff member’s covered district centroids. Rural/urban classification is still pending.' }
+            : { metricName: 'Rural/urban + travel context', metricValue: 'Insufficient data', sourceType: 'workload', weight: 'context' as const, tone: 'amber' as const, explanation: 'Covered districts are not geocoded yet — travel fairness is partial.' },
         ],
       });
     }

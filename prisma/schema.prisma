@@ -474,6 +474,11 @@ model District {
   clusters   Cluster[]
   staffGeo   StaffGeographyAssignment[]
   staffPrimary StaffProfile[] @relation("StaffPrimaryDistrict")
+  // Approx district centroid — feeds the Leadership context-fairness travel
+  // burden (haversine spread across a staff member's covered districts). Null
+  // until seeded, in which case travel burden stays "insufficient data".
+  latitude   Float?
+  longitude  Float?
   createdAt  DateTime    @default(now())
 
   @@unique([regionId, name])
