@@ -1715,3 +1715,70 @@ model RecruitmentReadinessProfile {
   @@unique([scopeType, scopeId, fy, quarter])
   @@index([fy])
 }
+
+// ── Budget Intelligence & Financial Decision Engine ─────────────────────────
+// The financial twin of the Leadership Decision Engine: connects cost to
+// verified activity, target achievement and SSA impact. Recommends reallocation
+// / increase / pause / review — never auto-executes a finance action.
+enum ImpactYield {
+  high
+  healthy
+  weak
+  low
+  insufficient
+}
+
+model BudgetIntelligenceInsight {
+  id              String   @id @default(cuid())
+  fy              String
+  periodType      String   // month | quarter | fy | week
+  period          String   // e.g. "2026-03" | "Q3" | "FY"
+  insightType     String   // monthly | partner | activity | regional | accountability | reallocation
+  scopeType       DecisionScopeType
+  scopeId         String?
+  scopeName       String?
+
+  recommendation  String
+  reason          String
+  riskLevel       DecisionRiskLevel
+  impactYield     ImpactYield
+  confidenceLevel DecisionConfidenceLevel
+  confidenceScore Float
+  amountAffected  Float?   // UGX exposed to this decision
+  evidenceSummary Json?
+  financialImplication String?
+  suggestedAction String
+  alternatives    Json?
+  metrics         Json?
+  riskFlags       String[]
+
+  status          DecisionStatus @default(new)
+  reviewedByUserId String?
+  reviewedByRole   EdifyRole?
+  reviewedAt      DateTime?
+  reviewNote      String?
+
+  generatedAt     DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  notes           FinanceDecisionNote[]
+
+  @@index([fy, insightType])
+  @@index([scopeType, scopeId])
+  @@index([status])
+  @@index([impactYield])
+}
+
+model FinanceDecisionNote {
+  id        String   @id @default(cuid())
+  insight   BudgetIntelligenceInsight @relation(fields: [insightId], references: [id], onDelete: Cascade)
+  insightId String
+  authorUserId String
+  authorRole   EdifyRole
+  note      String
+  kind      String   @default("note") // note | follow_up | decision
+  createdAt DateTime @default(now())
+
+  @@index([insightId])
+}

@@ -52,6 +52,12 @@ export const PERMISSIONS = {
   // The engine RECOMMENDS; these permissions never auto-execute a decision.
   LEADERSHIP_ENGINE_VIEW: 'leadership.view',
   LEADERSHIP_DECISION_REVIEW: 'leadership.review',
+  // Budget Intelligence & Financial Decision Engine — the financial brain. VIEW
+  // gates the budget-intelligence boards (role-tailored inside the service);
+  // REVIEW gates the human finance-decision actions (accept/hold/reallocate +
+  // finance notes). Recommends; never auto-moves money.
+  BUDGET_INTELLIGENCE_VIEW: 'budgetIntelligence.view',
+  BUDGET_DECISION_REVIEW: 'budgetDecision.review',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -76,6 +82,8 @@ export const ROLE_PERMISSIONS: Record<EdifyRole, PermissionKey[]> = {
     P.RECRUITMENT_INTELLIGENCE_VIEW,
     // Full country leadership decision authority.
     P.LEADERSHIP_ENGINE_VIEW, P.LEADERSHIP_DECISION_REVIEW,
+    // Full country financial intelligence + reallocation decision authority.
+    P.BUDGET_INTELLIGENCE_VIEW, P.BUDGET_DECISION_REVIEW,
   ],
   RegionalVicePresident: [
     // No SCHOOL_DIRECTORY_VIEW — summary analytics + recruitment intelligence only.
@@ -83,6 +91,7 @@ export const ROLE_PERMISSIONS: Record<EdifyRole, PermissionKey[]> = {
     P.BUDGET_VIEW_SUMMARY, P.ANALYTICS_VIEW, P.RECRUITMENT_INTELLIGENCE_VIEW,
     // Region/country summary + approval-level decision review.
     P.LEADERSHIP_ENGINE_VIEW, P.LEADERSHIP_DECISION_REVIEW,
+    P.BUDGET_INTELLIGENCE_VIEW, // summary budget view
   ],
   CountryProgramLead: [
     P.SCHOOL_VIEW, P.SCHOOL_DIRECTORY_VIEW, P.SCHOOL_EDIT, P.CLUSTER_VIEW, P.CLUSTER_ASSIGN, P.SSA_VIEW,
@@ -93,6 +102,7 @@ export const ROLE_PERMISSIONS: Record<EdifyRole, PermissionKey[]> = {
     P.RECRUITMENT_INTELLIGENCE_VIEW,
     // Supervised-team decision support + review within their scope.
     P.LEADERSHIP_ENGINE_VIEW, P.LEADERSHIP_DECISION_REVIEW,
+    P.BUDGET_INTELLIGENCE_VIEW, // supervised-team budget/fund view
   ],
   CCEO: [
     // The CCEO is the primary cluster-assigning field role: they run the
@@ -105,6 +115,7 @@ export const ROLE_PERMISSIONS: Record<EdifyRole, PermissionKey[]> = {
     // their own consolidated monthly request up to the PL.
     P.BUDGET_VIEW_DETAIL, P.BUDGET_APPROVE,
     P.ANALYTICS_VIEW, P.RECRUITMENT_INTELLIGENCE_VIEW,
+    P.BUDGET_INTELLIGENCE_VIEW, // own planned/funded activities view
   ],
   ImpactAssessment: [
     P.SCHOOL_VIEW, P.SCHOOL_DIRECTORY_VIEW, P.SCHOOL_UPLOAD, P.SCHOOL_EDIT, P.SCHOOL_RESOLVE_DUPLICATE,
@@ -120,6 +131,8 @@ export const ROLE_PERMISSIONS: Record<EdifyRole, PermissionKey[]> = {
     P.ANALYTICS_VIEW, P.EXPORT,
     // Finance-implication view only — no staff/partner decision authority.
     P.LEADERSHIP_ENGINE_VIEW,
+    // Finance execution + accountability + finance-decision review.
+    P.BUDGET_INTELLIGENCE_VIEW, P.BUDGET_DECISION_REVIEW,
   ],
   HumanResources: [
     // People surfaces only — staff performance, leave planner, daily debrief.
