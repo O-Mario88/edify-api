@@ -63,6 +63,16 @@ export class FlagsService {
     return flag;
   }
 
+  /** Active Program Leads the CD can flag to (the flag form's picker). */
+  async programLeads() {
+    const programLeads = await this.prisma.user.findMany({
+      where: { isActive: true, roles: { has: 'CountryProgramLead' } },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+    return { programLeads };
+  }
+
   /** The caller's flag queue: a PL sees flags assigned to them; a CD sees flags
    *  they raised (so both ends track the handoff). */
   async list(user: AuthUser, status?: string) {

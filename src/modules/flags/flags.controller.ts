@@ -22,6 +22,11 @@ export class FlagsController {
     return this.flags.raise(user, body);
   }
 
+  @Get('program-leads')
+  programLeads() {
+    return this.flags.programLeads();
+  }
+
   @Get()
   list(@CurrentUser() user: AuthUser, @Query('status') status?: string) {
     return this.flags.list(user, status);
