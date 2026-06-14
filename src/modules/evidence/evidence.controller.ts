@@ -6,6 +6,7 @@ import { ApiBearerAuth, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { createReadStream, mkdirSync } from 'node:fs';
 import type { Response } from 'express';
 import { EvidenceService, EVIDENCE_DIR, type StoredFile } from './evidence.service';
+import { ALLOWED_MIME_TYPES } from './file-validation';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/rbac/permissions.guard';
 import { RequirePermissions } from '../../common/rbac/require-permissions.decorator';
@@ -33,17 +34,9 @@ export class EvidenceController {
     dest: EVIDENCE_DIR,
     limits: { fileSize: 10 * 1024 * 1024 },
     fileFilter: (_req, file, cb) => {
-      // Images + PDF preview inline; Word/Excel/CSV are accepted for
-      // download-based review. octet-stream covers browsers that send a
-      // generic type for .docx/.xlsx.
-      const ok = new Set([
-        'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'application/pdf',
-        'application/msword',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'application/vnd.ms-excel',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'text/csv', 'application/octet-stream',
-      ]).has(file.mimetype);
+      // First gate: declared-MIME allowlist (shared with the service). The
+      // service then sniffs real magic bytes — the declared type is not trusted.
+      const ok = ALLOWED_MIME_TYPES.has(file.mimetype);
       cb(ok ? null : new Error('Unsupported file type — use PDF, image, Word, Excel or CSV'), ok);
     },
   }))
@@ -62,16 +55,27 @@ export class EvidenceController {
   }
 
   // Stream the stored file back (for IA / staff review previews + download).
-  // Sets the real Content-Type + filename so PDFs/images preview inline and
-  // Word/Excel download with the right name.
+  // Authorizes the caller against the parent activity (object-level), then sets
+  // the real Content-Type + filename and hardened headers so the browser cannot
+  // sniff the type, run embedded scripts, or frame the response.
   @Get(':id/file')
   @RequirePermissions(PERMISSIONS.PLANNING_VIEW)
-  async file(@Param('id') id: string, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
-    const { absPath, mimeType, originalName } = await this.evidence.fileFor(id);
+  async file(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { absPath, mimeType, originalName } = await this.evidence.fileFor(user, id);
     const inlineable = /^(image\/|application\/pdf)/.test(mimeType);
     res.set({
       'Content-Type': mimeType,
       'Content-Disposition': `${inlineable ? 'inline' : 'attachment'}; filename="${originalName.replace(/"/g, '')}"`,
+      // Defang the file response: no MIME sniffing, no active content, no framing.
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; img-src 'self' data:; object-src 'none'; sandbox",
+      'X-Frame-Options': 'DENY',
+      'Referrer-Policy': 'no-referrer',
+      'Cache-Control': 'private, no-store',
     });
     return new StreamableFile(createReadStream(absPath));
   }

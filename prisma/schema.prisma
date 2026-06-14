@@ -813,9 +813,14 @@ model EvidenceRecord {
   reviewedBy   String?
   reviewedAt   DateTime?
   reviewNote   String?
+  // Malware-scan seam (spec §11). scanStatus: pending | clean | infected |
+  // skipped (no scanner configured). A quarantined file is never downloadable.
+  scanStatus   String       @default("pending")
+  quarantined  Boolean      @default(false)
   createdAt    DateTime     @default(now())
 
   @@index([activityId])
+  @@index([quarantined])
 }
 
 // ─────────────── Salesforce verification (manual) ───────────────

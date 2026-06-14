@@ -1,11 +1,13 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { existsSync } from 'node:fs';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { closeSync, existsSync, openSync, readSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ScopeService } from '../../common/scope/scope.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { AuthorizationService } from '../../common/authz/authorization.service';
 import { AuthUser } from '../../common/auth/auth-user';
+import { assertSafeUpload, sanitizeOriginalName } from './file-validation';
+import { EVIDENCE_SCANNER, type EvidenceScanner } from './evidence-scanner';
 
 // Where uploaded evidence files live. On Railway, mount a persistent volume at
 // this path (EVIDENCE_STORAGE_DIR) so files survive redeploys.
@@ -32,7 +34,25 @@ export class EvidenceService {
     private readonly scope: ScopeService,
     private readonly audit: AuditService,
     private readonly authz: AuthorizationService,
+    @Inject(EVIDENCE_SCANNER) private readonly scanner: EvidenceScanner,
   ) {}
+
+  /** Remove a rejected/temp upload from disk (best-effort). */
+  private discard(absPath?: string): void {
+    if (absPath) rmSync(absPath, { force: true });
+  }
+
+  /** Read the first ~4KB of a stored file for magic-byte + scan inspection. */
+  private readHead(absPath: string, bytes = 4100): Buffer {
+    const fd = openSync(absPath, 'r');
+    try {
+      const buf = Buffer.alloc(bytes);
+      const read = readSync(fd, buf, 0, bytes, 0);
+      return buf.subarray(0, read);
+    } finally {
+      closeSync(fd);
+    }
+  }
 
   async recordUpload(user: AuthUser, activityId: string, kind: string, file: StoredFile) {
     if (!file) throw new BadRequestException('A file is required.');
@@ -41,17 +61,44 @@ export class EvidenceService {
       where: { id: activityId, deletedAt: null },
       select: { id: true, deliveryType: true, status: true },
     });
-    if (!activity) throw new NotFoundException('Activity not found');
+    if (!activity) {
+      this.discard(file.path);
+      throw new NotFoundException('Activity not found');
+    }
     // Object-level: the uploader must own/deliver this activity (a partner is
     // pinned to their own assigned work; staff to their portfolio).
     await this.authz.assertCanAccess(user, { kind: 'evidence', loadedEntity: { id: '', activityId, uploadedBy: user.userId } }, 'upload');
+
+    // Content validation: extension + MIME + magic-byte sniff. The declared
+    // type is NOT trusted — bytes must match, and active/executable content is
+    // rejected. On any failure the temp file is removed.
+    const head = this.readHead(file.path);
+    try {
+      assertSafeUpload(file, head);
+    } catch (err) {
+      this.discard(file.path);
+      throw err;
+    }
+
+    // Malware scan (no-op default → 'skipped'). An infected file is quarantined
+    // and deleted; it never reaches storage as servable.
+    const scanStatus = await this.scanner.scan(file.path, head);
+    if (scanStatus === 'infected') {
+      this.discard(file.path);
+      await this.audit.log({
+        action: 'evidence.quarantine', subjectKind: 'Activity', subjectId: activityId,
+        actorId: user.userId, actorRole: user.activeRole,
+        payload: { originalName: sanitizeOriginalName(file.originalname), reason: 'malware-scan' },
+      });
+      throw new BadRequestException('The file was rejected by the malware scan.');
+    }
 
     // The on-disk filename is the stored reference (relative to EVIDENCE_DIR).
     const rec = await this.prisma.evidenceRecord.create({
       data: {
         activityId, kind: kind as never, uri: file.filename,
-        originalName: file.originalname, mimeType: file.mimetype,
-        uploadedBy: user.userId, status: 'uploaded',
+        originalName: sanitizeOriginalName(file.originalname), mimeType: file.mimetype,
+        uploadedBy: user.userId, status: 'uploaded', scanStatus,
       },
     });
     // Partner-delivered work moves to "evidence uploaded" awaiting staff review;
@@ -70,9 +117,9 @@ export class EvidenceService {
     await this.audit.log({
       action: 'evidence.upload', subjectKind: 'Activity', subjectId: activityId,
       actorId: user.userId, actorRole: user.activeRole,
-      payload: { kind, originalName: file.originalname, size: file.size, mimeType: file.mimetype },
+      payload: { kind, originalName: rec.originalName, size: file.size, mimeType: file.mimetype, scanStatus },
     });
-    return { id: rec.id, kind, originalName: file.originalname, size: file.size, status: rec.status };
+    return { id: rec.id, kind, originalName: rec.originalName, size: file.size, status: rec.status };
   }
 
   async listForActivity(_user: AuthUser, activityId: string) {
@@ -85,12 +132,19 @@ export class EvidenceService {
     }));
   }
 
-  /** Resolve an evidence record to its absolute on-disk path (for streaming). */
-  async fileFor(id: string): Promise<{ absPath: string; mimeType: string; originalName: string }> {
+  /** Resolve an evidence record to its absolute on-disk path (for streaming).
+   *  Authorizes the CALLER against the parent activity (closes the download
+   *  IDOR — the endpoint used to gate only on PLANNING_VIEW with no row check),
+   *  blocks quarantined files, and audits the access as a sensitive download. */
+  async fileFor(user: AuthUser, id: string): Promise<{ absPath: string; mimeType: string; originalName: string }> {
     const record = await this.prisma.evidenceRecord.findUnique({
-      where: { id }, select: { uri: true, mimeType: true, originalName: true },
+      where: { id },
+      select: { id: true, activityId: true, uploadedBy: true, uri: true, mimeType: true, originalName: true, quarantined: true },
     });
     if (!record) throw new NotFoundException('Evidence not found');
+    if (record.quarantined) throw new NotFoundException('Evidence file is unavailable');
+    // Object-level: the parent activity must be in the caller's scope.
+    await this.authz.assertCanAccess(user, { kind: 'evidence', id, loadedEntity: record }, 'download');
     // Guard against path traversal — the uri is just a filename.
     const safe = record.uri.replace(/[/\\]/g, '');
     const absPath = join(EVIDENCE_DIR, safe);
@@ -98,7 +152,7 @@ export class EvidenceService {
     return {
       absPath,
       mimeType: record.mimeType ?? 'application/octet-stream',
-      originalName: record.originalName ?? safe,
+      originalName: sanitizeOriginalName(record.originalName ?? safe),
     };
   }
 
