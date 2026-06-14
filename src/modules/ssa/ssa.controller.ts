@@ -29,6 +29,14 @@ export class SsaController {
     return this.ssa.forSchool(schoolId, user);
   }
 
+  /** SSA-driven recommendation (two weakest interventions + severity) — the
+   *  backend source that replaces the empty in-memory mock rec-engine. */
+  @Get('school/:schoolId/recommendation')
+  @RequirePermissions(PERMISSIONS.SSA_VIEW)
+  recommendationForSchool(@Param('schoolId') schoolId: string, @CurrentUser() user: AuthUser) {
+    return this.ssa.recommendationForSchool(schoolId, user);
+  }
+
   // 10% client-portfolio verification QA (spec §10–§12).
   @Get('verification-requirements')
   @RequirePermissions(PERMISSIONS.SSA_VIEW)

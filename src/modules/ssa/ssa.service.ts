@@ -9,6 +9,18 @@ import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 import { getOperationalFY, getQuarterForDate } from '../../common/fy/fy.util';
 import { UploadSsaDto } from './dto/upload-ssa.dto';
 
+// Readable labels for the 8 canonical SSA interventions (recommendation copy).
+const INTERVENTION_LABEL: Record<string, string> = {
+  teaching_and_learning: 'Teaching & Learning',
+  financial_health: 'Financial Health',
+  christlike_behaviour: 'Christ-like Behaviour',
+  exposure_to_word_of_god: 'Exposure to the Word of God',
+  government_requirements: 'Government Requirements',
+  leadership: 'Leadership',
+  education_technology: 'Education Technology',
+  learning_environment: 'Learning Environment',
+};
+
 @Injectable()
 export class SsaService {
   constructor(
@@ -35,6 +47,27 @@ export class SsaService {
     const school = await this.prisma.school.findFirst({ where: { schoolId, deletedAt: null, ...this.scope.schoolWhere(scope) } });
     if (!school) throw new NotFoundException('School not found or outside your scope');
     return this.prisma.ssaRecord.findMany({ where: { schoolId: school.id, deletedAt: null }, orderBy: { dateOfSsa: 'desc' }, take: 20, include: { scores: true } });
+  }
+
+  /** SSA-driven recommendation for a school: the two weakest interventions from
+   *  the latest SSA + a severity band. The canonical "SSA creates the
+   *  recommendation" source — computed from real SsaRecord scores, replacing the
+   *  empty in-memory mock rec-engine. */
+  async recommendationForSchool(schoolId: string, user: AuthUser) {
+    const records = await this.forSchool(schoolId, user); // reuses scope check
+    const latest = records[0];
+    if (!latest || !latest.scores.length) {
+      return { schoolId, hasSsa: false, weakest: [], severity: 'unknown', recommendation: 'No SSA on record — upload an SSA to unlock planning recommendations.' };
+    }
+    const label = (i: string) => INTERVENTION_LABEL[i] ?? i;
+    const sorted = [...latest.scores].sort((a, b) => a.score - b.score);
+    const weakest = sorted.slice(0, 2).map((s) => ({ intervention: s.intervention, score: s.score, label: label(s.intervention) }));
+    const minScore = weakest[0]?.score ?? 10;
+    const severity = minScore < 4 ? 'critical' : minScore < 7 ? 'support' : 'good';
+    const recommendation = severity === 'good'
+      ? `Performing well (lowest ${weakest[0].label} ${weakest[0].score}/10) — maintain support.`
+      : `Prioritise ${weakest.map((w) => `${w.label} (${w.score}/10)`).join(' + ')} — the two weakest interventions.`;
+    return { schoolId, hasSsa: true, fy: latest.fy, averageScore: latest.averageScore, severity, weakest, recommendation };
   }
 
   // IA uploads SSA: derives FY/quarter, writes scores, updates readiness.
