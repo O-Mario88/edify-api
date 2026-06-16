@@ -112,6 +112,62 @@ export class AnalyticsService {
     };
   }
 
+  // One combined, role-scoped country/region snapshot for the leadership dashboards
+  // (CD / RVP). Every number is a real count/aggregate over the caller's scope —
+  // schools, SSA health, the activity pipeline, finance, and team size — so the
+  // leadership KPI strip reads live truth instead of fabricated figures.
+  async leadershipSummary(user: AuthUser) {
+    const scope = await this.scope.resolveUserScope(user);
+    const where = this.schoolScope(scope);
+    const fy = getOperationalFY();
+    const schoolIds = (await this.prisma.school.findMany({ where, select: { id: true } })).map((s) => s.id);
+    const idsOrNone = schoolIds.length ? schoolIds : ['__none__'];
+    const actWhere: Prisma.ActivityWhereInput = { deletedAt: null, ...(scope.countryScope ? {} : { schoolId: { in: idsOrNone } }) };
+    const [total, core, unclustered, ssaDone, ssaRecords, byStatus, staffCount, partnerCount, fundReqCount, disb] = await Promise.all([
+      this.prisma.school.count({ where }),
+      this.prisma.school.count({ where: { ...where, schoolType: 'core' } }),
+      this.prisma.school.count({ where: { ...where, clusterStatus: 'unclustered' } }),
+      this.prisma.school.count({ where: { ...where, currentFySsaStatus: 'done' } }),
+      this.prisma.ssaRecord.findMany({ where: { schoolId: { in: idsOrNone }, deletedAt: null, fy }, select: { averageScore: true, scores: { select: { intervention: true, score: true } } } }),
+      this.prisma.activity.groupBy({ by: ['status'], where: actWhere, _count: true }),
+      this.prisma.staffProfile.count({ where: { user: { isActive: true } } }),
+      this.prisma.partner.count({ where: { activeStatus: true } }),
+      this.prisma.fundRequest.count(),
+      this.prisma.paymentDisbursement.aggregate({ _sum: { amount: true }, _count: true }),
+    ]);
+    const scored = ssaRecords.filter((r) => r.averageScore != null);
+    const ssaAverage = scored.length ? Math.round((scored.reduce((s, r) => s + (r.averageScore ?? 0), 0) / scored.length) * 10) / 10 : 0;
+    const acc = new Map<string, { sum: number; n: number }>();
+    for (const r of ssaRecords) for (const sc of r.scores) {
+      const cur = acc.get(sc.intervention) ?? { sum: 0, n: 0 };
+      cur.sum += sc.score; cur.n++; acc.set(sc.intervention, cur);
+    }
+    const byIntervention = [...acc.entries()]
+      .map(([intervention, v]) => ({ intervention, average: Math.round((v.sum / v.n) * 10) / 10 }))
+      .sort((a, b) => a.average - b.average || a.intervention.localeCompare(b.intervention));
+    const cnt = (s: string) => byStatus.find((g) => g.status === s)?._count ?? 0;
+    return {
+      countryScope: scope.countryScope,
+      schools: total, coreSchools: core, clientSchools: total - core,
+      clustered: total - unclustered, unclustered, ssaDone, ssaPending: total - ssaDone,
+      ssaCompletePct: total ? Math.round((ssaDone / total) * 100) : 0,
+      ssaAverage, byIntervention, weakestInterventions: byIntervention.slice(0, 2),
+      pipeline: {
+        planned: cnt('planned'),
+        scheduled: cnt('scheduled') + cnt('partner_scheduled') + cnt('assigned_to_partner'),
+        inProgress: cnt('in_progress'),
+        evidenceUploaded: cnt('evidence_uploaded'),
+        awaitingIa: cnt('awaiting_ia_verification'),
+        iaVerified: cnt('ia_verified'),
+        completed: cnt('completed'),
+      },
+      activitiesTotal: byStatus.reduce((s, g) => s + g._count, 0),
+      staffCount, partnerCount,
+      fundRequests: fundReqCount,
+      paymentsCleared: disb._count, disbursedTotalUgx: disb._sum.amount ?? 0,
+    };
+  }
+
   // ── SSA Performance by group (the average of EACH of the 8 interventions) ──
   // Starts from School Directory, joins the latest SSA per school in the FY,
   // scopes by the caller, includes Client + Core by default. Drillable.

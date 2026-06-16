@@ -36,6 +36,7 @@ export class AnalyticsController {
   }
 
   @Get('dashboard') dashboard(@CurrentUser() u: AuthUser) { return this.analytics.dashboardSummary(u); }
+  @Get('leadership-summary') leadershipSummary(@CurrentUser() u: AuthUser) { return this.analytics.leadershipSummary(u); }
   @Get('school-directory') directory(@CurrentUser() u: AuthUser) { return this.analytics.schoolDirectorySummary(u); }
   @Get('ssa-performance') ssa(@CurrentUser() u: AuthUser) { return this.analytics.ssaPerformance(u); }
 
