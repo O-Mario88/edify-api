@@ -9,6 +9,7 @@ import type { Action } from '../../common/authz/resource-ref';
 import { AuthUser } from '../../common/auth/auth-user';
 import { paginate } from '../../common/dto/pagination.dto';
 import { isValidSalesforceId } from '../../common/salesforce/salesforce-id.util';
+import { getOperationalFY, getQuarterForDate } from '../../common/fy/fy.util';
 import { AssignmentService } from '../assignment/assignment.service';
 import { CompleteActivityDto, CreateActivityDto, QueryActivitiesDto } from './dto/activities.dto';
 
@@ -98,11 +99,18 @@ export class ActivitiesService {
     const responsibleStaffId = isPartner
       ? (dto.responsibleStaffId ?? undefined)
       : (dto.responsibleStaffId ?? user.staffProfileId ?? undefined);
+    // Period integrity: fy + quarter are DERIVED from the scheduled date (the
+    // source of truth) so they can never disagree with scheduledDate and the
+    // analytics rollups (which group by these columns) stay correct. Only when
+    // an activity is planned-but-undated do we fall back to the client values.
+    const scheduledDate = dto.scheduledDate ? new Date(dto.scheduledDate) : undefined;
+    const fy = scheduledDate ? getOperationalFY(scheduledDate) : dto.fy;
+    const quarter = scheduledDate ? getQuarterForDate(scheduledDate) : dto.quarter;
     const activity = await this.prisma.activity.create({
       data: {
-        activityType: dto.activityType, schoolId, clusterId: dto.clusterId, fy: dto.fy, quarter: dto.quarter,
+        activityType: dto.activityType, schoolId, clusterId: dto.clusterId, fy, quarter,
         plannedMonth: dto.plannedMonth, plannedWeek: dto.plannedWeek, responsibleStaffId,
-        scheduledDate: dto.scheduledDate ? new Date(dto.scheduledDate) : undefined,
+        scheduledDate,
         assignedPartnerId: dto.assignedPartnerId, deliveryType: isPartner ? 'partner' : 'staff',
         clusterSlot: dto.clusterSlot ?? undefined,
         status: isPartner ? 'assigned_to_partner' : 'planned',
@@ -230,10 +238,15 @@ export class ActivitiesService {
     if ((a.rescheduleCount ?? 0) >= RESCHEDULE_SLIP_LIMIT) {
       throw new BadRequestException(`Reschedule limit reached (${RESCHEDULE_SLIP_LIMIT}). Escalate or convert this activity instead.`);
     }
+    // Recompute the period from the new date so a rescheduled activity counts in
+    // its NEW quarter/FY, not the old one (otherwise rollups double-count or
+    // miscount across period boundaries).
+    const newDate = new Date(dto.scheduledDate);
     const updated = await this.prisma.activity.update({
       where: { id },
       data: {
-        scheduledDate: new Date(dto.scheduledDate), rescheduleCount: { increment: 1 }, lastReason: dto.reason,
+        scheduledDate: newDate, fy: getOperationalFY(newDate), quarter: getQuarterForDate(newDate),
+        rescheduleCount: { increment: 1 }, lastReason: dto.reason,
         status: a.status === 'cancelled' || a.status === 'deferred' ? 'planned' : 'rescheduled',
       },
     });

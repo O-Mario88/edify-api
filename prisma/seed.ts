@@ -309,7 +309,10 @@ async function seedSsa(rows: SchoolRow[]) {
     if (!r.ssaDone) continue;
     const isCore = r.schoolType === 'core';
     const baseline = ssaScores(isCore).map((s) => ({ intervention: s.intervention, score: Math.max(1, Math.round((s.score - 1.2) * 10) / 10) }));
-    jobs.push(() => prisma.ssaRecord.create({ data: { schoolId: r.dbId, dateOfSsa: new Date(Date.UTC(2025, 9, 1 + (Number(r.ext) % 80))), fy: '2025', quarter: 'Q1', newEnrollment: ri(120, 800), averageScore: avg(baseline), uploadedBy: 'seed', verificationStatus: 'confirmed', scores: { create: baseline } } }));
+    // Baseline SSA must sit in the PREVIOUS operational FY (FY2025 = Oct 2024→Sep
+    // 2025) so the year-over-year impact comparison has a real prior-FY record.
+    // Feb 2025 → FY2025 Q2. (Oct 2025 would be FY2026 Q1 and break the comparison.)
+    jobs.push(() => prisma.ssaRecord.create({ data: { schoolId: r.dbId, dateOfSsa: new Date(Date.UTC(2025, 1, 1 + (Number(r.ext) % 80))), fy: '2025', quarter: 'Q2', newEnrollment: ri(120, 800), averageScore: avg(baseline), uploadedBy: 'seed', verificationStatus: 'confirmed', scores: { create: baseline } } }));
     count++;
     if (isCore) {
       const improved = rnd() < 0.72;
@@ -387,6 +390,11 @@ async function seedActivities(rows: SchoolRow[], cceos: Staff[], coord: Staff, p
   const partner = partnerIds[0];
   const today = new Date('2026-06-12T08:00:00Z');
   const day = (delta: number) => { const d = new Date(today); d.setUTCDate(d.getUTCDate() + delta); return d; };
+  // Period is DERIVED from the date (operational FY = Oct→Sep), never hardcoded,
+  // so seeded quarter/fy can never disagree with scheduledDate. Mirrors
+  // src/common/fy/fy.util.ts exactly.
+  const fyOf = (d: Date) => (d.getUTCMonth() >= 9 ? d.getUTCFullYear() + 1 : d.getUTCFullYear()).toString();
+  const qOf = (d: Date): string => { const m = d.getUTCMonth(); return m >= 9 ? 'Q1' : m <= 2 ? 'Q2' : m <= 5 ? 'Q3' : 'Q4'; };
   const sfV = (r: SchoolRow, n = 1) => `SV-${r.ext}${n}`;
   const sfT = (r: SchoolRow, n = 1) => `TS-${r.ext}${n}`;
 
@@ -402,11 +410,14 @@ async function seedActivities(rows: SchoolRow[], cceos: Staff[], coord: Staff, p
     payment?: { path: PaymentPath; status: PaymentStatus; amount: number }; verifySfId?: string;
   };
   const scenarios: Scenario[] = [];
-  const baseOver = (o: Over): Over => ({
-    activityType: 'school_visit', fy: '2026', quarter: 'Q2', deliveryType: DeliveryType.staff,
-    status: ActivityStatus.planned, evidenceStatus: EvidenceStatus.none, iaVerificationStatus: VerificationStatus.pending,
-    paymentStatus: PaymentStatus.none, ...o,
-  });
+  const baseOver = (o: Over): Over => {
+    const when = o.scheduledDate ? new Date(o.scheduledDate) : today;
+    return {
+      activityType: 'school_visit', fy: fyOf(when), quarter: qOf(when), deliveryType: DeliveryType.staff,
+      status: ActivityStatus.planned, evidenceStatus: EvidenceStatus.none, iaVerificationStatus: VerificationStatus.pending,
+      paymentStatus: PaymentStatus.none, ...o,
+    };
+  };
 
   // 1) Staff SCHEDULED visits → My Plan (Due Today / This Week / This Month)
   for (const delta of [0, 2, 4, 12]) {
@@ -447,7 +458,12 @@ async function seedActivities(rows: SchoolRow[], cceos: Staff[], coord: Staff, p
       },
     });
     for (const e of s.evidence ?? []) {
-      await prisma.evidenceRecord.create({ data: { activityId: a.id, kind: e.kind, uri: e.kind === 'photo' ? sample.png : sample.pdf, uploadedBy: e.partner ? 'seed-partner' : 'seed-staff', status: e.status, reviewedBy: e.status === 'accepted' ? 'seed-staff' : undefined, reviewedAt: e.status === 'accepted' ? day(-2) : undefined } });
+      const isPhoto = e.kind === 'photo';
+      await prisma.evidenceRecord.create({ data: { activityId: a.id, kind: e.kind, uri: isPhoto ? sample.png : sample.pdf,
+        // Carry the same metadata a real upload sets, so the IA's viewer serves
+        // the correct MIME (inline preview) instead of octet-stream force-download.
+        mimeType: isPhoto ? 'image/png' : 'application/pdf', originalName: isPhoto ? `${e.kind}.png` : `${e.kind}.pdf`,
+        uploadedBy: e.partner ? 'seed-partner' : 'seed-staff', status: e.status, reviewedBy: e.status === 'accepted' ? 'seed-staff' : undefined, reviewedAt: e.status === 'accepted' ? day(-2) : undefined } });
     }
     if (s.verifySfId) await prisma.activityCompletionVerification.create({ data: { activityId: a.id, salesforceId: s.verifySfId, enteredBy: 'seed-staff', status: 'confirmed', iaActorId: 'seed-ia', iaActionAt: day(-2) } }).catch(() => undefined);
     if (s.payment) { const pr = await prisma.paymentRequest.create({ data: { activityId: a.id, path: s.payment.path, amount: s.payment.amount, status: s.payment.status } }); await prisma.paymentActionLog.create({ data: { paymentRequestId: pr.id, action: 'ia_confirmed', actorId: 'seed-ia' } }); }
@@ -462,13 +478,14 @@ async function seedActivities(rows: SchoolRow[], cceos: Staff[], coord: Staff, p
     const partnerDelivered = Number(r.ext) % 4 === 0;
     for (let n = 1; n <= 2; n++) {
       const training = n === 2;
+      const sched = day(-30 - n);
       bulk.push({
         activityType: training ? 'core_training' : 'core_visit', schoolId: r.dbId, responsibleStaffId: r.ownerId,
         assignedPartnerId: partnerDelivered ? partner : null, deliveryType: partnerDelivered ? 'partner' : 'staff',
-        fy: '2026', quarter: 'Q2', status: 'completed', evidenceStatus: 'accepted', iaVerificationStatus: 'confirmed', iaConfirmedAt: day(-30),
+        fy: fyOf(sched), quarter: qOf(sched), status: 'completed', evidenceStatus: 'accepted', iaVerificationStatus: 'confirmed', iaConfirmedAt: day(-30),
         salesforceActivityId: training ? sfT(r, n) : sfV(r, n), salesforceActivityType: training ? 'training' : 'visit',
         teachersAttended: training ? ri(8, 28) : null, leadersAttended: training ? ri(2, 5) : null,
-        paymentStatus: partnerDelivered ? 'paid' : 'closed', scheduledDate: day(-30 - n), plannedMonth: 4,
+        paymentStatus: partnerDelivered ? 'paid' : 'closed', scheduledDate: sched, plannedMonth: 4,
         purposeIntervention: INTERVENTIONS[(n - 1) % INTERVENTIONS.length],
       });
     }
