@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { ScopeService } from '../../common/scope/scope.service';
 import { ReadinessService } from '../../common/readiness/readiness.service';
+import { DomainEventService } from '../../common/realtime/domain-events.service';
 import { permissionsForRole, PERMISSIONS } from '../../common/rbac/permissions';
 import { AuthUser } from '../../common/auth/auth-user';
 import { CreateClusterDto, CreateClusterFromSchoolDto } from './dto/cluster.dto';
@@ -15,6 +16,7 @@ export class ClustersService {
     private readonly audit: AuditService,
     private readonly scope: ScopeService,
     private readonly readiness: ReadinessService,
+    private readonly events: DomainEventService,
   ) {}
 
   // ── Lists ─────────────────────────────────────────────────────────
@@ -361,6 +363,24 @@ export class ClustersService {
       subjectKind: 'School', subjectId: school.id, actorId: user.userId, actorRole: user.activeRole,
       payload: { clusterId, previousClusterId, subCountyId: school.subCountyId, districtId: school.districtId, reason, planningReadiness },
     });
+    // Handoff: tell the school's account owner it's clustered and (if SSA-complete)
+    // ready to plan — the bridge from the directory into their planning board.
+    const ownerUserId = await this.events.userForStaff(school.accountOwnerId);
+    if (ownerUserId && ownerUserId !== user.userId) {
+      await this.events.emit({
+        type: 'SchoolClustered',
+        actorId: user.userId, actorRole: user.activeRole, subjectKind: 'School', subjectId: school.id,
+        payload: { clusterId, planningReadiness },
+        notify: [{
+          recipientId: ownerUserId,
+          title: 'School clustered — ready to plan',
+          body: `${school.name} is now in a cluster${planningReadiness === 'ready' ? ' and ready for SSA-led planning.' : '.'}`,
+          contextType: 'school', contextId: school.schoolId,
+          actionRequired: planningReadiness === 'ready', priority: 'normal',
+        }],
+        liveUserIds: [user.userId, ownerUserId],
+      });
+    }
     return { ok: true, schoolId, clusterId, previousClusterId, planningReadiness, stage };
   }
 }

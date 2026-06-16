@@ -60,11 +60,14 @@ export class SsaService {
       return { schoolId, hasSsa: false, weakest: [], severity: 'unknown', recommendation: 'No SSA on record — upload an SSA to unlock planning recommendations.' };
     }
     const label = (i: string) => INTERVENTION_LABEL[i] ?? i;
-    const sorted = [...latest.scores].sort((a, b) => a.score - b.score);
+    // Deterministic tie-break (score, then intervention name) so the two weakest
+    // never depend on DB row order and ALWAYS match the frontend recommendation.
+    const sorted = [...latest.scores].sort((a, b) => a.score - b.score || a.intervention.localeCompare(b.intervention));
     const weakest = sorted.slice(0, 2).map((s) => ({ intervention: s.intervention, score: s.score, label: label(s.intervention) }));
     const minScore = weakest[0]?.score ?? 10;
-    const severity = minScore < 4 ? 'critical' : minScore < 7 ? 'support' : 'good';
-    const recommendation = severity === 'good'
+    // Canonical severity bands: 0–4 Critical · 5–6 Needs Support · 7–8 Good · 9–10 Strong.
+    const severity = minScore < 5 ? 'critical' : minScore < 7 ? 'support' : minScore < 9 ? 'good' : 'strong';
+    const recommendation = severity === 'good' || severity === 'strong'
       ? `Performing well (lowest ${weakest[0].label} ${weakest[0].score}/10) — maintain support.`
       : `Prioritise ${weakest.map((w) => `${w.label} (${w.score}/10)`).join(' + ')} — the two weakest interventions.`;
     return { schoolId, hasSsa: true, fy: latest.fy, averageScore: latest.averageScore, severity, weakest, recommendation };

@@ -10,6 +10,7 @@ import { AuthUser } from '../../common/auth/auth-user';
 import { paginate } from '../../common/dto/pagination.dto';
 import { isValidSalesforceId } from '../../common/salesforce/salesforce-id.util';
 import { getOperationalFY, getQuarterForDate } from '../../common/fy/fy.util';
+import { costForActivity, RateCard, CostableActivity } from '../budget/costing';
 import { AssignmentService } from '../assignment/assignment.service';
 import { CompleteActivityDto, CreateActivityDto, QueryActivitiesDto } from './dto/activities.dto';
 
@@ -118,6 +119,28 @@ export class ActivitiesService {
       },
     });
     await this.audit.log({ action: 'activity.create', subjectKind: 'Activity', subjectId: activity.id, actorId: user.userId, actorRole: user.activeRole, payload: { type: dto.activityType } });
+    // Handoff: if this was assigned to someone OTHER than the creator (a PL
+    // scheduling for a supervised CCEO), notify them it's in their My Plan —
+    // otherwise the work appears silently and the assignee has to go looking.
+    // The deep link is resolved role-aware by the notification engine.
+    if (responsibleStaffId && responsibleStaffId !== user.staffProfileId) {
+      const assigneeUserId = await this.events.userForStaff(responsibleStaffId);
+      if (assigneeUserId) {
+        await this.events.emit({
+          type: 'ActivityAssigned',
+          actorId: user.userId, actorRole: user.activeRole, subjectKind: 'Activity', subjectId: activity.id,
+          payload: { type: dto.activityType },
+          notify: [{
+            recipientId: assigneeUserId,
+            title: 'New activity assigned to you',
+            body: `${user.name} scheduled a ${dto.activityType.replace(/_/g, ' ')} for you.`,
+            contextType: 'my_plan_activity', contextId: activity.id,
+            actionRequired: true, priority: 'normal',
+          }],
+          liveUserIds: [user.userId, assigneeUserId],
+        });
+      }
+    }
     return activity;
   }
 
@@ -321,7 +344,45 @@ export class ActivitiesService {
     // Object-level check (PAYMENT_ACT + scope) + audit the sensitive money-move.
     await this.authz.assertCanAccess(user, { kind: 'payment', id: a.id, loadedEntity: a }, 'pay');
 
-    const updated = await this.prisma.activity.update({ where: { id }, data: { paymentStatus: 'paid' } });
+    // Compute the cleared amount from the official CD Country Cost Register (the
+    // same source as the scheduling cost preview) so the disbursement ledger is
+    // authoritative, not a guess.
+    const rateRows = await this.prisma.costSetting.findMany({ select: { key: true, unitCost: true } });
+    const rates: RateCard = {};
+    for (const r of rateRows) rates[r.key] = r.unitCost;
+    const cost = costForActivity(
+      {
+        activityType: a.activityType as CostableActivity['activityType'],
+        deliveryType: 'partner',
+        teachersAttended: a.teachersAttended ?? undefined,
+        leadersAttended: a.leadersAttended ?? undefined,
+        otherParticipants: a.otherParticipants ?? undefined,
+      },
+      rates,
+    );
+    const amount = cost.amount ?? 0;
+
+    // Write the financial record-of-truth — previously the only trace of a cleared
+    // payment was a single enum on Activity. Now a cleared payment persists a
+    // PaymentRequest + an immutable PaymentActionLog + a PaymentDisbursement ledger
+    // row, all in one transaction, so finance/accountability/reconciliation views
+    // read real records (not an orphaned table).
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const pr = await tx.paymentRequest.upsert({
+        where: { activityId: id },
+        create: { activityId: id, path: 'partner', amount, status: 'paid' },
+        update: { amount, status: 'paid' },
+      });
+      await tx.paymentActionLog.create({
+        data: { paymentRequestId: pr.id, action: 'paid', actorId: user.userId, note: `Cleared by accountant · SF ${a.salesforceActivityId ?? '—'}${cost.costMissing ? ' · cost rate missing' : ''}` },
+      });
+      await tx.paymentDisbursement.upsert({
+        where: { paymentRequestId: pr.id },
+        create: { paymentRequestId: pr.id, amount, clearedBy: user.userId, reference: a.salesforceActivityId ?? undefined },
+        update: { amount, clearedBy: user.userId, reference: a.salesforceActivityId ?? undefined },
+      });
+      return tx.activity.update({ where: { id }, data: { paymentStatus: 'paid' } });
+    });
 
     // Live: the partner payment closed — refresh the staff/CCEO + partner views.
     const staffUserId = await this.events.userForStaff(a.responsibleStaffId);
