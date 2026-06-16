@@ -84,8 +84,13 @@ async function main() {
   assert('schools span multiple regions (>= 2)', regions.length >= 2, true);
   const districts = await prisma.school.groupBy({ by: ['districtId'], where: { deletedAt: null }, _count: true });
   assert('schools span multiple districts (>= 5)', districts.length >= 5, true);
-  const owners = await prisma.school.groupBy({ by: ['accountOwnerId'], where: { deletedAt: null, accountOwnerId: { not: null } }, _count: true });
-  assert('schools span multiple staff owners (>= 2)', owners.length >= 2, true);
+  // Every school must have an active account owner (role-scoped testing depends
+  // on it). The roster may legitimately be a single CCEO, so we assert coverage
+  // (all schools owned by an ACTIVE user), not a multi-owner spread.
+  const owned = await prisma.school.count({ where: { deletedAt: null, accountOwnerId: { not: null } } });
+  const activeOwned = await prisma.school.count({ where: { deletedAt: null, accountOwner: { user: { isActive: true } } } });
+  assert('every school has an account owner', owned, active);
+  assert('every school owner is an active user', activeOwned, active);
   const types = await prisma.school.groupBy({ by: ['schoolType'], where: { deletedAt: null }, _count: true });
   assert('schools include both Client and Core types', types.length >= 2, true);
 

@@ -16,6 +16,7 @@
     "seed:school-directory-test": "ts-node --transpile-only prisma/seed-school-directory-test.ts",
     "reset": "ts-node --transpile-only scripts/reset-online-test.ts",
     "validate": "ts-node --transpile-only scripts/validate-online-test.ts",
+    "trim:users": "ts-node --transpile-only scripts/trim-users-online-test.ts",
     "audit:verify": "ts-node --transpile-only scripts/audit-verify.ts",
     "audit:export": "ts-node --transpile-only scripts/audit-export.ts",
     "prod:check": "ts-node --transpile-only scripts/prod-readiness.ts",
