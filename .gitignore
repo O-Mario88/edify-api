@@ -7,3 +7,4 @@ dist
 coverage
 # Uploaded evidence files (live on a mounted volume in production).
 uploads/
+backups/
