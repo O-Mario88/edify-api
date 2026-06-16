@@ -8,8 +8,10 @@ import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 export class NotificationsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  // Active feed excludes resolved (archived) notifications — a resolved alert
+  // disappears from the bell instead of lingering as stale noise.
   list(user: AuthUser, q: PaginationDto) {
-    const where = { recipientId: user.userId };
+    const where = { recipientId: user.userId, status: { not: 'archived' as const } };
     return Promise.all([
       this.prisma.notification.findMany({ where, skip: q.skip, take: q.take, orderBy: { createdAt: 'desc' } }),
       this.prisma.notification.count({ where }),
@@ -17,7 +19,7 @@ export class NotificationsService {
   }
 
   recent(user: AuthUser) {
-    return this.prisma.notification.findMany({ where: { recipientId: user.userId }, orderBy: { createdAt: 'desc' }, take: 8 });
+    return this.prisma.notification.findMany({ where: { recipientId: user.userId, status: { not: 'archived' } }, orderBy: { createdAt: 'desc' }, take: 8 });
   }
 
   async counts(user: AuthUser) {
@@ -38,5 +40,14 @@ export class NotificationsService {
   async markAllRead(user: AuthUser) {
     const r = await this.prisma.notification.updateMany({ where: { recipientId: user.userId, status: 'unread' }, data: { status: 'read' } });
     return { updated: r.count };
+  }
+
+  // Mark a notification resolved (the issue it points to is handled). Resolved
+  // notifications leave the active feed and the unread badge.
+  async resolve(id: string, user: AuthUser) {
+    const n = await this.prisma.notification.findUnique({ where: { id } });
+    if (!n) throw new NotFoundException('Notification not found');
+    if (n.recipientId !== user.userId) throw new ForbiddenException('Not your notification');
+    return this.prisma.notification.update({ where: { id }, data: { status: 'archived' } });
   }
 }

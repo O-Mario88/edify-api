@@ -3,6 +3,7 @@ import { EdifyRole, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RealtimeService } from './realtime.service';
 import { AuditService } from '../audit/audit.service';
+import { resolveContextRoute } from '../notifications/context-route';
 
 export type NotifySpec = {
   recipientId: string;
@@ -60,23 +61,9 @@ export class DomainEventService {
         payload: evt.payload,
       });
 
-      // 2) Notifications — saved per-recipient, never decorative.
-      const created = [];
-      for (const n of evt.notify ?? []) {
-        const row = await this.prisma.notification.create({
-          data: {
-            recipientId: n.recipientId,
-            title: n.title,
-            body: n.body,
-            contextType: n.contextType ?? evt.subjectKind,
-            contextId: n.contextId ?? evt.subjectId,
-            targetRoute: n.targetRoute,
-            actionRequired: n.actionRequired ?? false,
-            priority: (n.priority ?? 'normal') as never,
-          },
-        });
-        created.push(row);
-      }
+      // 2) Notifications — saved per-recipient, never decorative. Routed to a
+      // role-aware deep link, and deduped so the same unresolved alert never spams.
+      const created = await this.createNotifications(evt.notify, evt.subjectKind, evt.subjectId);
 
       // 3a) Recipients get a live "notification" event (drives the unread badge).
       for (const n of created) {
@@ -105,22 +92,7 @@ export class DomainEventService {
   async notifyOnly(evt: Omit<DomainEvent, 'actorRole' | 'payload'>): Promise<void> {
     const at = Date.now();
     try {
-      const created = [];
-      for (const n of evt.notify ?? []) {
-        const row = await this.prisma.notification.create({
-          data: {
-            recipientId: n.recipientId,
-            title: n.title,
-            body: n.body,
-            contextType: n.contextType ?? evt.subjectKind,
-            contextId: n.contextId ?? evt.subjectId,
-            targetRoute: n.targetRoute,
-            actionRequired: n.actionRequired ?? false,
-            priority: (n.priority ?? 'normal') as never,
-          },
-        });
-        created.push(row);
-      }
+      const created = await this.createNotifications(evt.notify, evt.subjectKind, evt.subjectId);
       for (const n of created) {
         this.realtime.publish(n.recipientId, {
           type: 'notification', subjectKind: 'Notification', subjectId: n.id, at,
@@ -133,6 +105,80 @@ export class DomainEventService {
       );
     } catch {
       // Best-effort — the source-of-truth write + its chained audit already committed.
+    }
+  }
+
+  /**
+   * Persist per-recipient notifications with two guarantees:
+   *  • role-aware deep link — when the caller didn't pass an explicit targetRoute,
+   *    resolve one for the recipient's role + the event context (never a route the
+   *    role can't act on);
+   *  • dedupe — one UNRESOLVED notification per (recipient, context, title). A repeat
+   *    event bumps the existing row to the top instead of spamming a new one.
+   */
+  private async createNotifications(
+    notify: NotifySpec[] | undefined,
+    fallbackKind?: string,
+    fallbackId?: string,
+  ) {
+    const specs = notify ?? [];
+    if (specs.length === 0) return [];
+    const ids = [...new Set(specs.map((s) => s.recipientId))];
+    const roleById = new Map<string, EdifyRole>();
+    for (const u of await this.prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, activeRole: true } })) {
+      roleById.set(u.id, u.activeRole);
+    }
+    const created: Array<{ id: string; recipientId: string; title: string; actionRequired: boolean; priority: string }> = [];
+    for (const n of specs) {
+      const contextType = n.contextType ?? fallbackKind ?? null;
+      const contextId = n.contextId ?? fallbackId ?? null;
+      const role = roleById.get(n.recipientId);
+      const targetRoute = n.targetRoute ?? (role && contextType ? resolveContextRoute(role, contextType, contextId) : undefined);
+      const data = {
+        recipientId: n.recipientId,
+        title: n.title,
+        body: n.body,
+        contextType,
+        contextId,
+        targetRoute,
+        actionRequired: n.actionRequired ?? false,
+        priority: (n.priority ?? 'normal') as never,
+      };
+      // Dedupe against an existing unread notification for the same record + title.
+      const existing = await this.prisma.notification.findFirst({
+        where: { recipientId: n.recipientId, status: 'unread', title: n.title, contextType, contextId },
+        select: { id: true },
+      });
+      const row = existing
+        ? await this.prisma.notification.update({ where: { id: existing.id }, data: { ...data, createdAt: new Date() } })
+        : await this.prisma.notification.create({ data });
+      created.push(row);
+    }
+    return created;
+  }
+
+  /**
+   * Auto-resolve open notifications for a context once the underlying issue is
+   * fixed — e.g. uploading evidence resolves the "evidence missing" alert, paying
+   * resolves "payment ready". Workflow actions call this post-commit so stale
+   * notifications never linger. Pushes a live refresh so the bell badge drops.
+   */
+  async resolveContext(contextType: string, contextId: string, opts?: { titleIncludes?: string }): Promise<number> {
+    try {
+      const where: Prisma.NotificationWhereInput = {
+        contextType, contextId, status: { in: ['unread', 'read'] },
+        ...(opts?.titleIncludes ? { title: { contains: opts.titleIncludes } } : {}),
+      };
+      const affected = await this.prisma.notification.findMany({ where, select: { recipientId: true } });
+      if (affected.length === 0) return 0;
+      await this.prisma.notification.updateMany({ where, data: { status: 'archived' } });
+      this.realtime.publishMany(
+        [...new Set(affected.map((a) => a.recipientId))],
+        { type: 'notification.resolved', subjectKind: 'Notification', subjectId: contextId, at: Date.now() },
+      );
+      return affected.length;
+    } catch {
+      return 0;
     }
   }
 

@@ -181,9 +181,16 @@ export class EvidenceService {
       action: `evidence.${action}`, subjectKind: 'Activity', subjectId: rec.activityId,
       actorId: user.userId, actorRole: user.activeRole, payload: { evidenceId: id, note },
     });
+    // On accept, the evidence issue is handled — resolve any open "evidence
+    // missing / re-upload needed" alerts for this activity so they don't linger.
+    if (action === 'accept') {
+      await this.events.resolveContext('evidence', rec.activityId);
+    }
     // Close the handoff: tell the uploader their evidence was accepted/returned.
     // A return is actionable (re-upload); an accept is informational. Without
-    // this, the partner/staff who submitted had no signal and had to poll.
+    // this, the partner/staff who submitted had no signal and had to poll. The
+    // route is resolved role-aware by the engine (a partner uploader lands on
+    // /partner/activities, a staff uploader on /my-plan — never the wrong page).
     if (rec.uploadedBy) {
       await this.events.emit({
         type: action === 'accept' ? 'EvidenceAccepted' : 'EvidenceReturned',
@@ -195,7 +202,8 @@ export class EvidenceService {
           body: action === 'accept'
             ? 'Your submitted evidence was accepted.'
             : note ? `Returned: ${note}` : 'Please review and re-upload your evidence.',
-          targetRoute: '/my-plan',
+          contextType: 'evidence',
+          contextId: rec.activityId,
           actionRequired: action === 'return',
           priority: action === 'return' ? 'high' : 'normal',
         }],

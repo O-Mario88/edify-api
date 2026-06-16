@@ -27,4 +27,7 @@ export class NotificationsController {
 
   @Patch('mark-all-read')
   markAllRead(@CurrentUser() user: AuthUser) { return this.notifications.markAllRead(user); }
+
+  @Patch(':id/resolve')
+  resolve(@Param('id') id: string, @CurrentUser() user: AuthUser) { return this.notifications.resolve(id, user); }
 }

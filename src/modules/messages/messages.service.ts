@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { paginate, PaginationDto } from '../../common/dto/pagination.dto';
 import { DomainEventService } from '../../common/realtime/domain-events.service';
+import { resolveContextRoute } from '../../common/notifications/context-route';
 
 // Per-user workflow messages, scoped to the recipient.
 @Injectable()
@@ -63,20 +64,23 @@ export class MessagesService {
     if (!dto.body?.trim()) throw new BadRequestException('Message body is required.');
     if (!dto.contextType?.trim()) throw new BadRequestException('A context is required for a new message.');
     if (dto.recipientId === user.userId) throw new BadRequestException('You cannot message yourself.');
-    const recipient = await this.prisma.user.findFirst({ where: { id: dto.recipientId, isActive: true }, select: { id: true } });
+    const recipient = await this.prisma.user.findFirst({ where: { id: dto.recipientId, isActive: true }, select: { id: true, activeRole: true } });
     if (!recipient) throw new BadRequestException('Recipient not found or inactive.');
+    // Deep-link the message to the EXACT record, routed for the recipient's role
+    // (so a CD doesn't land on a planning route they can't use).
+    const route = resolveContextRoute(recipient.activeRole, dto.contextType, dto.contextId);
     const thread = await this.prisma.messageThread.create({
       data: { subject: dto.subject?.trim() || `${dto.contextType} message`, contextType: dto.contextType, contextId: dto.contextId },
     });
     const msg = await this.prisma.message.create({
       data: {
         threadId: thread.id, senderId: user.userId, recipientId: recipient.id, body: dto.body.trim(),
-        category: dto.category, contextType: dto.contextType, contextId: dto.contextId, targetRoute: '/messages', status: 'unread',
+        category: dto.category, contextType: dto.contextType, contextId: dto.contextId, targetRoute: route, status: 'unread',
       },
     });
     await this.events.notifyOnly({
       type: 'Message.Sent', subjectKind: 'Message', subjectId: msg.id, actorId: user.userId,
-      notify: [{ recipientId: recipient.id, title: `New message from ${user.name}`, body: dto.body.trim().slice(0, 140), targetRoute: '/messages', actionRequired: false, priority: 'normal' as const }],
+      notify: [{ recipientId: recipient.id, title: `New message from ${user.name}`, body: dto.body.trim().slice(0, 140), contextType: dto.contextType, contextId: dto.contextId, targetRoute: route, actionRequired: false, priority: 'normal' as const }],
       liveUserIds: [user.userId, recipient.id],
     });
     return { threadId: thread.id, id: msg.id };
@@ -91,13 +95,16 @@ export class MessagesService {
     for (const m of thread.messages) { parts.add(m.senderId); if (m.recipientId) parts.add(m.recipientId); }
     if (!parts.has(user.userId)) throw new ForbiddenException('You are not a participant in this thread.');
     const other = [...parts].find((p) => p !== user.userId) ?? null;
+    // Resolve the reply's deep-link for the OTHER party's role (the recipient).
+    const otherUser = other ? await this.prisma.user.findUnique({ where: { id: other }, select: { activeRole: true } }) : null;
+    const route = otherUser ? resolveContextRoute(otherUser.activeRole, thread.contextType, thread.contextId) : '/messages';
     const msg = await this.prisma.message.create({
-      data: { threadId, senderId: user.userId, recipientId: other, body: dto.body.trim(), contextType: thread.contextType, contextId: thread.contextId, targetRoute: '/messages', status: 'unread' },
+      data: { threadId, senderId: user.userId, recipientId: other, body: dto.body.trim(), contextType: thread.contextType, contextId: thread.contextId, targetRoute: route, status: 'unread' },
     });
     if (other) {
       await this.events.notifyOnly({
         type: 'Message.Reply', subjectKind: 'Message', subjectId: msg.id, actorId: user.userId,
-        notify: [{ recipientId: other, title: `Reply from ${user.name}`, body: dto.body.trim().slice(0, 140), targetRoute: '/messages', actionRequired: false, priority: 'normal' as const }],
+        notify: [{ recipientId: other, title: `Reply from ${user.name}`, body: dto.body.trim().slice(0, 140), contextType: thread.contextType ?? undefined, contextId: thread.contextId ?? undefined, targetRoute: route, actionRequired: false, priority: 'normal' as const }],
         liveUserIds: [user.userId, other],
       });
     }
