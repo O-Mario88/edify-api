@@ -26,9 +26,12 @@ for i, wkb in enumerate(geoms):
     g = set_precision(g, 0.001)
     if g.is_empty:
         continue
+    # representative_point() is guaranteed inside the polygon — a good label anchor.
+    rp = g.representative_point()
     features.append({
         "type": "Feature",
-        "properties": {"pcode": fields[pcode_i][i], "name": fields[name_i][i], "district": fields[dist_i][i]},
+        "properties": {"pcode": fields[pcode_i][i], "name": fields[name_i][i], "district": fields[dist_i][i],
+                       "lng": round(rp.x, 4), "lat": round(rp.y, 4)},
         "geometry": mapping(g),
     })
 
