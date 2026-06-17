@@ -618,6 +618,11 @@ model School {
   // Resolved official sub-region / county ids (plain refs — joined in app code).
   subRegionId              String?
   countyId                 String?
+  // Exact school coordinates — null until uploaded/geocoded. When present, the
+  // geo-analytics map renders an EXACT pin automatically; otherwise the school
+  // is represented in the district's aggregate (bubble at the district centroid).
+  latitude                 Float?
+  longitude                Float?
   // ORIGINAL uploaded geography text — preserved verbatim for audit + correction,
   // never overwritten by matching. Match status drives the geography review queue.
   uploadedRegionText       String?

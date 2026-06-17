@@ -249,13 +249,20 @@ export class AnalyticsService {
     const schools = await this.prisma.school.findMany({
       where,
       select: {
-        id: true, districtId: true, schoolType: true, clusterStatus: true, currentFySsaStatus: true,
-        district: { select: { name: true, pcode: true, region: { select: { name: true } }, subRegion: { select: { name: true } } } },
+        id: true, name: true, districtId: true, schoolType: true, clusterStatus: true, currentFySsaStatus: true,
+        latitude: true, longitude: true,
+        district: { select: { name: true, pcode: true, latitude: true, longitude: true, region: { select: { name: true } }, subRegion: { select: { name: true } } } },
         ssaRecords: { where: { deletedAt: null, fy }, orderBy: { dateOfSsa: 'desc' }, take: 1, select: { averageScore: true } },
       },
     });
+    // Exact-coordinate school points → auto-pins on the map. Empty until schools
+    // are uploaded/geocoded with coordinates; then they appear automatically.
+    const schoolPoints = schools
+      .filter((s) => s.latitude != null && s.longitude != null)
+      .map((s) => ({ schoolId: s.id, name: s.name, lat: s.latitude!, lng: s.longitude!, type: s.schoolType }));
     type Acc = {
       districtId: string; name: string; pcode: string | null; region: string; subRegion: string | null;
+      centroidLat: number | null; centroidLng: number | null;
       schools: number; core: number; clustered: number; ssaDone: number; ssaSum: number; ssaN: number;
       critical: number; schoolIds: string[];
     };
@@ -264,6 +271,7 @@ export class AnalyticsService {
       const cur: Acc = map.get(s.districtId) ?? {
         districtId: s.districtId, name: s.district?.name ?? 'District', pcode: s.district?.pcode ?? null,
         region: s.district?.region?.name ?? '', subRegion: s.district?.subRegion?.name ?? null,
+        centroidLat: s.district?.latitude ?? null, centroidLng: s.district?.longitude ?? null,
         schools: 0, core: 0, clustered: 0, ssaDone: 0, ssaSum: 0, ssaN: 0, critical: 0, schoolIds: [],
       };
       cur.schools++;
@@ -298,6 +306,7 @@ export class AnalyticsService {
       const status = districtStatus(avgSsa, d.schools, d.critical);
       return {
         districtId: d.districtId, pcode: d.pcode, district: d.name, region: d.region, subRegion: d.subRegion,
+        centroidLat: d.centroidLat, centroidLng: d.centroidLng,
         schools: d.schools, coreSchools: d.core, clientSchools: d.schools - d.core,
         clustered: d.clustered, unclustered: d.schools - d.clustered,
         ssaDone: d.ssaDone, ssaPending: d.schools - d.ssaDone,
@@ -337,6 +346,7 @@ export class AnalyticsService {
       },
       districts,
       subRegions,
+      schoolPoints,
     };
   }
 
