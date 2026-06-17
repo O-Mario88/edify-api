@@ -249,10 +249,10 @@ export class AnalyticsService {
     const schools = await this.prisma.school.findMany({
       where,
       select: {
-        id: true, name: true, districtId: true, schoolType: true, clusterStatus: true, currentFySsaStatus: true,
+        id: true, name: true, districtId: true, clusterId: true, schoolType: true, clusterStatus: true, currentFySsaStatus: true,
         latitude: true, longitude: true,
         district: { select: { name: true, pcode: true, latitude: true, longitude: true, region: { select: { name: true } }, subRegion: { select: { name: true } } } },
-        ssaRecords: { where: { deletedAt: null, fy }, orderBy: { dateOfSsa: 'desc' }, take: 1, select: { averageScore: true } },
+        ssaRecords: { where: { deletedAt: null, fy }, orderBy: { dateOfSsa: 'desc' }, take: 1, select: { averageScore: true, scores: { select: { intervention: true, score: true } } } },
       },
     });
     // Exact-coordinate school points → auto-pins on the map. Empty until schools
@@ -264,7 +264,8 @@ export class AnalyticsService {
       districtId: string; name: string; pcode: string | null; region: string; subRegion: string | null;
       centroidLat: number | null; centroidLng: number | null;
       schools: number; core: number; clustered: number; ssaDone: number; ssaSum: number; ssaN: number;
-      critical: number; schoolIds: string[];
+      critical: number; schoolIds: string[]; clusterIds: Set<string>;
+      intv: Map<string, { sum: number; n: number }>;
     };
     const map = new Map<string, Acc>();
     for (const s of schools) {
@@ -273,16 +274,24 @@ export class AnalyticsService {
         region: s.district?.region?.name ?? '', subRegion: s.district?.subRegion?.name ?? null,
         centroidLat: s.district?.latitude ?? null, centroidLng: s.district?.longitude ?? null,
         schools: 0, core: 0, clustered: 0, ssaDone: 0, ssaSum: 0, ssaN: 0, critical: 0, schoolIds: [],
+        clusterIds: new Set<string>(), intv: new Map<string, { sum: number; n: number }>(),
       };
       cur.schools++;
       cur.schoolIds.push(s.id);
+      if (s.clusterId) cur.clusterIds.add(s.clusterId);
       if (s.schoolType === 'core') cur.core++;
       if (s.clusterStatus === 'clustered') cur.clustered++;
       if (s.currentFySsaStatus === 'done') cur.ssaDone++;
-      const avg = s.ssaRecords[0]?.averageScore;
-      if (avg != null) { cur.ssaSum += avg; cur.ssaN++; if (avg < 5) cur.critical++; }
+      const rec = s.ssaRecords[0];
+      if (rec?.averageScore != null) { cur.ssaSum += rec.averageScore; cur.ssaN++; if (rec.averageScore < 5) cur.critical++; }
+      // Per-intervention accumulation → the district's weakest interventions.
+      for (const sc of rec?.scores ?? []) {
+        const e = cur.intv.get(sc.intervention) ?? { sum: 0, n: 0 };
+        e.sum += sc.score; e.n++; cur.intv.set(sc.intervention, e);
+      }
       map.set(s.districtId, cur);
     }
+    const intvLabel = (k: string) => INTERVENTION_META.find((m) => m.key === k)?.label ?? k;
 
     // Completed activities per district (one grouped query over the scoped schools).
     const allSchoolIds = schools.map((s) => s.id);
@@ -304,16 +313,22 @@ export class AnalyticsService {
       const avgSsa = d.ssaN ? Math.round((d.ssaSum / d.ssaN) * 10) / 10 : null;
       // Leadership status — combines weak average with a critical-school share.
       const status = districtStatus(avgSsa, d.schools, d.critical);
+      // The 2 interventions the whole district is weakest in (lowest district
+      // averages), deterministic tie-break by intervention key.
+      const weakestInterventions = [...d.intv.entries()]
+        .map(([k, v]) => ({ key: k, label: intvLabel(k), avg: Math.round((v.sum / v.n) * 10) / 10 }))
+        .sort((a, b) => a.avg - b.avg || a.key.localeCompare(b.key))
+        .slice(0, 2);
       return {
         districtId: d.districtId, pcode: d.pcode, district: d.name, region: d.region, subRegion: d.subRegion,
         centroidLat: d.centroidLat, centroidLng: d.centroidLng,
         schools: d.schools, coreSchools: d.core, clientSchools: d.schools - d.core,
-        clustered: d.clustered, unclustered: d.schools - d.clustered,
+        clustered: d.clustered, unclustered: d.schools - d.clustered, clusters: d.clusterIds.size,
         ssaDone: d.ssaDone, ssaPending: d.schools - d.ssaDone,
         ssaPct: d.schools ? Math.round((d.ssaDone / d.schools) * 100) : 0,
         avgSsa, criticalCount: d.critical,
         activitiesCompleted: activitiesByDistrict.get(d.districtId) ?? 0,
-        status,
+        status, weakestInterventions,
       };
     }).sort((a, b) => b.schools - a.schools);
 
