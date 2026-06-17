@@ -168,6 +168,45 @@ export class AnalyticsService {
     };
   }
 
+  // Per-district rollup for the Districts directory — real school counts, SSA
+  // completion + average, and cluster coverage, scoped to the caller. Replaces the
+  // fabricated district mock.
+  async districtRollups(user: AuthUser) {
+    const scope = await this.scope.resolveUserScope(user);
+    const where = this.schoolScope(scope);
+    const schools = await this.prisma.school.findMany({
+      where,
+      select: {
+        districtId: true,
+        district: { select: { name: true } },
+        region: { select: { name: true } },
+        schoolType: true, clusterStatus: true, currentFySsaStatus: true,
+        ssaRecords: { where: { deletedAt: null, fy: getOperationalFY() }, orderBy: { dateOfSsa: 'desc' }, take: 1, select: { averageScore: true } },
+      },
+    });
+    type Acc = { districtId: string; district: string; region: string; schools: number; core: number; clustered: number; ssaDone: number; ssaSum: number; ssaN: number };
+    const map = new Map<string, Acc>();
+    for (const s of schools) {
+      const cur: Acc = map.get(s.districtId) ?? { districtId: s.districtId, district: s.district?.name ?? 'District', region: s.region?.name ?? '', schools: 0, core: 0, clustered: 0, ssaDone: 0, ssaSum: 0, ssaN: 0 };
+      cur.schools++;
+      if (s.schoolType === 'core') cur.core++;
+      if (s.clusterStatus === 'clustered') cur.clustered++;
+      if (s.currentFySsaStatus === 'done') cur.ssaDone++;
+      const avg = s.ssaRecords[0]?.averageScore;
+      if (avg != null) { cur.ssaSum += avg; cur.ssaN++; }
+      map.set(s.districtId, cur);
+    }
+    return {
+      districts: [...map.values()].map((d) => ({
+        districtId: d.districtId, district: d.district, region: d.region,
+        schools: d.schools, coreSchools: d.core, clientSchools: d.schools - d.core,
+        clustered: d.clustered, unclustered: d.schools - d.clustered,
+        ssaDone: d.ssaDone, ssaPct: d.schools ? Math.round((d.ssaDone / d.schools) * 100) : 0,
+        avgSsa: d.ssaN ? Math.round((d.ssaSum / d.ssaN) * 10) / 10 : 0,
+      })).sort((a, b) => b.schools - a.schools),
+    };
+  }
+
   // ── SSA Performance by group (the average of EACH of the 8 interventions) ──
   // Starts from School Directory, joins the latest SSA per school in the FY,
   // scopes by the caller, includes Client + Core by default. Drillable.
