@@ -264,6 +264,7 @@ export class AnalyticsService {
       districtId: string; name: string; pcode: string | null; region: string; subRegion: string | null;
       centroidLat: number | null; centroidLng: number | null;
       schools: number; core: number; clustered: number; ssaDone: number; ssaSum: number; ssaN: number;
+      coreSsaSum: number; coreSsaN: number; clientSsaSum: number; clientSsaN: number;
       critical: number; schoolIds: string[]; clusterIds: Set<string>;
       intv: Map<string, { sum: number; n: number }>;
     };
@@ -273,7 +274,8 @@ export class AnalyticsService {
         districtId: s.districtId, name: s.district?.name ?? 'District', pcode: s.district?.pcode ?? null,
         region: s.district?.region?.name ?? '', subRegion: s.district?.subRegion?.name ?? null,
         centroidLat: s.district?.latitude ?? null, centroidLng: s.district?.longitude ?? null,
-        schools: 0, core: 0, clustered: 0, ssaDone: 0, ssaSum: 0, ssaN: 0, critical: 0, schoolIds: [],
+        schools: 0, core: 0, clustered: 0, ssaDone: 0, ssaSum: 0, ssaN: 0,
+        coreSsaSum: 0, coreSsaN: 0, clientSsaSum: 0, clientSsaN: 0, critical: 0, schoolIds: [],
         clusterIds: new Set<string>(), intv: new Map<string, { sum: number; n: number }>(),
       };
       cur.schools++;
@@ -283,7 +285,12 @@ export class AnalyticsService {
       if (s.clusterStatus === 'clustered') cur.clustered++;
       if (s.currentFySsaStatus === 'done') cur.ssaDone++;
       const rec = s.ssaRecords[0];
-      if (rec?.averageScore != null) { cur.ssaSum += rec.averageScore; cur.ssaN++; if (rec.averageScore < 5) cur.critical++; }
+      if (rec?.averageScore != null) {
+        cur.ssaSum += rec.averageScore; cur.ssaN++; if (rec.averageScore < 5) cur.critical++;
+        // Split by school type so leadership sees core vs client SSA separately.
+        if (s.schoolType === 'core') { cur.coreSsaSum += rec.averageScore; cur.coreSsaN++; }
+        else { cur.clientSsaSum += rec.averageScore; cur.clientSsaN++; }
+      }
       // Per-intervention accumulation → the district's weakest interventions.
       for (const sc of rec?.scores ?? []) {
         const e = cur.intv.get(sc.intervention) ?? { sum: 0, n: 0 };
@@ -332,7 +339,10 @@ export class AnalyticsService {
         clustered: d.clustered, unclustered: d.schools - d.clustered, clusters: d.clusterIds.size,
         ssaDone: d.ssaDone, ssaPending: d.schools - d.ssaDone,
         ssaPct: d.schools ? Math.round((d.ssaDone / d.schools) * 100) : 0,
-        avgSsa, criticalCount: d.critical,
+        avgSsa,
+        coreAvgSsa: d.coreSsaN ? Math.round((d.coreSsaSum / d.coreSsaN) * 10) / 10 : null,
+        clientAvgSsa: d.clientSsaN ? Math.round((d.clientSsaSum / d.clientSsaN) * 10) / 10 : null,
+        criticalCount: d.critical,
         activitiesCompleted: activitiesByDistrict.get(d.districtId) ?? 0,
         status, interventions, weakestInterventions,
       };
@@ -359,8 +369,10 @@ export class AnalyticsService {
     // averages, weakest two, total clusters, and the national SSA average.
     const natIntv = new Map<string, { sum: number; n: number }>();
     let natSsaSum = 0, natSsaN = 0, natClusters = 0;
+    let natCoreSum = 0, natCoreN = 0, natClientSum = 0, natClientN = 0;
     for (const d of map.values()) {
       natClusters += d.clusterIds.size; natSsaSum += d.ssaSum; natSsaN += d.ssaN;
+      natCoreSum += d.coreSsaSum; natCoreN += d.coreSsaN; natClientSum += d.clientSsaSum; natClientN += d.clientSsaN;
       for (const [k, v] of d.intv) { const e = natIntv.get(k) ?? { sum: 0, n: 0 }; e.sum += v.sum; e.n += v.n; natIntv.set(k, e); }
     }
     const nationalInterventions = INTERVENTION_META.map((m) => {
@@ -380,6 +392,8 @@ export class AnalyticsService {
         clustered: districts.reduce((a, d) => a + d.clustered, 0), clusters: natClusters,
         ssaDone, ssaPending: totalSchools - ssaDone,
         avgSsa: natSsaN ? Math.round((natSsaSum / natSsaN) * 10) / 10 : null,
+        coreAvgSsa: natCoreN ? Math.round((natCoreSum / natCoreN) * 10) / 10 : null,
+        clientAvgSsa: natClientN ? Math.round((natClientSum / natClientN) * 10) / 10 : null,
         criticalSchools: districts.reduce((a, d) => a + d.criticalCount, 0),
         highRiskDistricts: districts.filter((d) => d.status === 'high_risk').length,
         activitiesCompleted: districts.reduce((a, d) => a + d.activitiesCompleted, 0),
@@ -413,7 +427,7 @@ export class AnalyticsService {
         .sort((a, b) => a.avg - b.avg || a.key.localeCompare(b.key))[0] ?? null;
 
     type Cl = { id: string; name: string; schools: number; ssaSum: number; ssaN: number; intv: Map<string, { sum: number; n: number }> };
-    type Sc = { name: string; schools: number; core: number; ssaSum: number; ssaN: number; clusterIds: Set<string>; intv: Map<string, { sum: number; n: number }> };
+    type Sc = { name: string; schools: number; core: number; ssaSum: number; ssaN: number; coreSsaSum: number; coreSsaN: number; clientSsaSum: number; clientSsaN: number; clusterIds: Set<string>; intv: Map<string, { sum: number; n: number }> };
     const clMap = new Map<string, Cl>();
     const scMap = new Map<string, Sc>();
     for (const s of schools) {
@@ -427,11 +441,15 @@ export class AnalyticsService {
       }
       const scName = s.subCounty?.name;
       if (scName) {
-        const sc = scMap.get(scName) ?? { name: scName, schools: 0, core: 0, ssaSum: 0, ssaN: 0, clusterIds: new Set(), intv: new Map() };
+        const sc = scMap.get(scName) ?? { name: scName, schools: 0, core: 0, ssaSum: 0, ssaN: 0, coreSsaSum: 0, coreSsaN: 0, clientSsaSum: 0, clientSsaN: 0, clusterIds: new Set(), intv: new Map() };
         sc.schools++;
         if (s.schoolType === 'core') sc.core++;
         if (s.clusterId) sc.clusterIds.add(s.clusterId);
-        if (rec?.averageScore != null) { sc.ssaSum += rec.averageScore; sc.ssaN++; }
+        if (rec?.averageScore != null) {
+          sc.ssaSum += rec.averageScore; sc.ssaN++;
+          if (s.schoolType === 'core') { sc.coreSsaSum += rec.averageScore; sc.coreSsaN++; }
+          else { sc.clientSsaSum += rec.averageScore; sc.clientSsaN++; }
+        }
         for (const x of rec?.scores ?? []) { const e = sc.intv.get(x.intervention) ?? { sum: 0, n: 0 }; e.sum += x.score; e.n++; sc.intv.set(x.intervention, e); }
         scMap.set(scName, sc);
       }
@@ -441,7 +459,10 @@ export class AnalyticsService {
     })).sort((a, b) => (a.avgSsa ?? 99) - (b.avgSsa ?? 99));
     const subCounties = [...scMap.values()].map((s) => ({
       name: s.name, schools: s.schools, coreSchools: s.core, clientSchools: s.schools - s.core,
-      clusters: s.clusterIds.size, avgSsa: s.ssaN ? Math.round((s.ssaSum / s.ssaN) * 10) / 10 : null, weakest: weakestOf(s.intv),
+      clusters: s.clusterIds.size, avgSsa: s.ssaN ? Math.round((s.ssaSum / s.ssaN) * 10) / 10 : null,
+      coreAvgSsa: s.coreSsaN ? Math.round((s.coreSsaSum / s.coreSsaN) * 10) / 10 : null,
+      clientAvgSsa: s.clientSsaN ? Math.round((s.clientSsaSum / s.clientSsaN) * 10) / 10 : null,
+      weakest: weakestOf(s.intv),
     })).sort((a, b) => b.schools - a.schools);
     return { districtId, clusters, subCounties };
   }
