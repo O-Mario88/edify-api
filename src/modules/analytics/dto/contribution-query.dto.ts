@@ -14,6 +14,10 @@ export class ContributionQueryDto {
   @IsOptional() @IsString() activityType?: string;
   @IsOptional() @IsString() projectId?: string;
   @IsOptional() @IsString() partnerId?: string;
+  // Name/key-based geography from the FE filter bar.
+  @IsOptional() @IsString() region?: string;
+  @IsOptional() @IsString() district?: string;
+  @IsOptional() @IsString() cluster?: string;
 }
 
 export class ContributionDrilldownDto extends ContributionQueryDto {

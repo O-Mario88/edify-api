@@ -21,6 +21,28 @@ const INTERVENTION_META: { key: SsaIntervention; code: string; label: string }[]
 
 export type SsaGroupBy = 'region' | 'district' | 'subCounty' | 'cluster' | 'cceo';
 
+// Shared geography filter. The FE filter bar emits a district *name* ("Gulu") and
+// a region *key* ("northern") — NOT the backend cuid — so the bridge resolves them
+// via Prisma RELATION filters (case-insensitive for region) rather than id lookups.
+// `__all__` is the FE "no filter" sentinel and is treated as absent.
+export type GeoFilter = { region?: string; district?: string; cluster?: string };
+const ALL = '__all__';
+const has = (v?: string): v is string => !!v && v !== ALL;
+export function geoActive(geo?: GeoFilter): boolean {
+  return !!geo && (has(geo.region) || has(geo.district) || has(geo.cluster));
+}
+// A School where-fragment for the selected geography. Only NARROWS — sets relation
+// keys (`district`/`region`) or `clusterId`, never `id`, so it composes safely with
+// the role scope (Prisma ANDs them).
+export function geoWhere(geo?: GeoFilter): Prisma.SchoolWhereInput {
+  const w: Prisma.SchoolWhereInput = {};
+  if (!geo) return w;
+  if (has(geo.district)) w.district = { name: geo.district };
+  if (has(geo.region)) w.region = { name: { equals: geo.region, mode: 'insensitive' } };
+  if (has(geo.cluster)) w.clusterId = geo.cluster;
+  return w;
+}
+
 // "By CCEO" is a supervisory lens — only roles that oversee multiple CCEOs may
 // use it. A CCEO grouping by CCEO would just see themselves; RVP is summary-only.
 const CCEO_GROUP_ROLES = ['CountryProgramLead', 'CountryDirector', 'ImpactAssessment'];
@@ -34,14 +56,17 @@ export class AnalyticsService {
     private readonly scope: ScopeService,
   ) {}
 
-  private schoolScope(scope: UserScope): Prisma.SchoolWhereInput {
-    // Aggregate scope: summary-only roles (RVP) get country-wide counts.
-    return { deletedAt: null, ...this.scope.aggregateSchoolWhere(scope) };
+  private schoolScope(scope: UserScope, geo?: GeoFilter): Prisma.SchoolWhereInput {
+    // Aggregate scope: summary-only roles (RVP) get country-wide counts. The
+    // optional geography filter is ANDed on top — it can only NARROW the scope
+    // (it sets `district`/`region` relation keys, never `id`), so a scoped user
+    // passing an out-of-scope district still resolves to 0 rows, never a leak.
+    return { deletedAt: null, ...this.scope.aggregateSchoolWhere(scope), ...geoWhere(geo) };
   }
 
-  async dashboardSummary(user: AuthUser) {
+  async dashboardSummary(user: AuthUser, geo?: GeoFilter) {
     const scope = await this.scope.resolveUserScope(user);
-    const where = this.schoolScope(scope);
+    const where = this.schoolScope(scope, geo);
     const [schools, core, ready, unclustered, ssaDone] = await Promise.all([
       this.prisma.school.count({ where }),
       this.prisma.school.count({ where: { ...where, schoolType: 'core' } }),
@@ -57,9 +82,9 @@ export class AnalyticsService {
     };
   }
 
-  async schoolDirectorySummary(user: AuthUser) {
+  async schoolDirectorySummary(user: AuthUser, geo?: GeoFilter) {
     const scope = await this.scope.resolveUserScope(user);
-    const where = this.schoolScope(scope);
+    const where = this.schoolScope(scope, geo);
     const [byType, byReadiness, unmatched, dupes] = await Promise.all([
       this.prisma.school.groupBy({ by: ['schoolType'], where, _count: true }),
       this.prisma.school.groupBy({ by: ['planningReadiness'], where, _count: true }),
@@ -73,9 +98,9 @@ export class AnalyticsService {
     };
   }
 
-  async ssaPerformance(user: AuthUser) {
+  async ssaPerformance(user: AuthUser, geo?: GeoFilter) {
     const scope = await this.scope.resolveUserScope(user);
-    const where = this.schoolScope(scope);
+    const where = this.schoolScope(scope, geo);
     const schools = await this.prisma.school.findMany({ where, select: { id: true } });
     const schoolIds = schools.map((s) => s.id);
     if (schoolIds.length === 0) return { schoolsWithSsa: 0, overallAverage: 0, byIntervention: [] };
@@ -98,11 +123,15 @@ export class AnalyticsService {
     };
   }
 
-  async activityPipeline(user: AuthUser) {
+  async activityPipeline(user: AuthUser, geo?: GeoFilter) {
     const scope = await this.scope.resolveUserScope(user);
-    const where = this.schoolScope(scope);
+    const where = this.schoolScope(scope, geo);
     const schoolIds = (await this.prisma.school.findMany({ where, select: { id: true } })).map((s) => s.id);
-    const actWhere: Prisma.ActivityWhereInput = { deletedAt: null, ...(scope.countryScope ? {} : { schoolId: { in: schoolIds.length ? schoolIds : ['__none__'] } }) };
+    // Country roles normally skip the schoolId filter (whole table), but when a
+    // geography filter is active we MUST constrain activities to the geo-narrowed
+    // school set — else the pipeline would stay national while the cards narrow.
+    const wholeTable = scope.countryScope && !geoActive(geo);
+    const actWhere: Prisma.ActivityWhereInput = { deletedAt: null, ...(wholeTable ? {} : { schoolId: { in: schoolIds.length ? schoolIds : ['__none__'] } }) };
     const byStatus = await this.prisma.activity.groupBy({ by: ['status'], where: actWhere, _count: true });
     const byDelivery = await this.prisma.activity.groupBy({ by: ['deliveryType'], where: actWhere, _count: true });
     return {
@@ -116,13 +145,14 @@ export class AnalyticsService {
   // (CD / RVP). Every number is a real count/aggregate over the caller's scope —
   // schools, SSA health, the activity pipeline, finance, and team size — so the
   // leadership KPI strip reads live truth instead of fabricated figures.
-  async leadershipSummary(user: AuthUser) {
+  async leadershipSummary(user: AuthUser, geo?: GeoFilter) {
     const scope = await this.scope.resolveUserScope(user);
-    const where = this.schoolScope(scope);
+    const where = this.schoolScope(scope, geo);
     const fy = getOperationalFY();
     const schoolIds = (await this.prisma.school.findMany({ where, select: { id: true } })).map((s) => s.id);
     const idsOrNone = schoolIds.length ? schoolIds : ['__none__'];
-    const actWhere: Prisma.ActivityWhereInput = { deletedAt: null, ...(scope.countryScope ? {} : { schoolId: { in: idsOrNone } }) };
+    const wholeTable = scope.countryScope && !geoActive(geo);
+    const actWhere: Prisma.ActivityWhereInput = { deletedAt: null, ...(wholeTable ? {} : { schoolId: { in: idsOrNone } }) };
     const [total, core, unclustered, ssaDone, ssaRecords, byStatus, staffCount, partnerCount, fundReqCount, disb] = await Promise.all([
       this.prisma.school.count({ where }),
       this.prisma.school.count({ where: { ...where, schoolType: 'core' } }),
@@ -171,9 +201,9 @@ export class AnalyticsService {
   // Per-district rollup for the Districts directory — real school counts, SSA
   // completion + average, and cluster coverage, scoped to the caller. Replaces the
   // fabricated district mock.
-  async districtRollups(user: AuthUser) {
+  async districtRollups(user: AuthUser, geo?: GeoFilter) {
     const scope = await this.scope.resolveUserScope(user);
-    const where = this.schoolScope(scope);
+    const where = this.schoolScope(scope, geo);
     const schools = await this.prisma.school.findMany({
       where,
       select: {
@@ -210,9 +240,9 @@ export class AnalyticsService {
   // Client-school coverage — real counts of client schools, how many have an
   // account owner, and which are below the SSA support threshold (avg < 5) and so
   // most need coverage/support. Replaces the fabricated coverage mock.
-  async coverageSummary(user: AuthUser) {
+  async coverageSummary(user: AuthUser, geo?: GeoFilter) {
     const scope = await this.scope.resolveUserScope(user);
-    const where = this.schoolScope(scope);
+    const where = this.schoolScope(scope, geo);
     const fy = getOperationalFY();
     const clientSchools = await this.prisma.school.findMany({
       where: { ...where, schoolType: 'client' },
@@ -250,12 +280,13 @@ export class AnalyticsService {
   async ssaPerformanceByGroup(user: AuthUser, params: {
     fy?: string; groupBy?: SsaGroupBy; schoolType?: string;
     regionId?: string; districtId?: string; clusterId?: string;
+    region?: string; district?: string; cluster?: string;
   }) {
     const scope = await this.scope.resolveUserScope(user);
     const groupBy: SsaGroupBy = params.groupBy ?? 'district';
     const fy = params.fy ?? getOperationalFY();
 
-    const where: Prisma.SchoolWhereInput = { deletedAt: null, ...this.scope.aggregateSchoolWhere(scope) };
+    const where: Prisma.SchoolWhereInput = { deletedAt: null, ...this.scope.aggregateSchoolWhere(scope), ...geoWhere(params) };
     if (params.schoolType && params.schoolType !== 'all') where.schoolType = params.schoolType as Prisma.SchoolWhereInput['schoolType'];
     if (params.regionId) where.regionId = params.regionId;
     if (params.districtId) where.districtId = params.districtId;
@@ -341,13 +372,14 @@ export class AnalyticsService {
   async interventionImprovement(user: AuthUser, params: {
     groupBy?: SsaGroupBy; schoolType?: string; currentFy?: string; prevFy?: string;
     regionId?: string; districtId?: string; clusterId?: string;
+    region?: string; district?: string; cluster?: string;
   }) {
     const scope = await this.scope.resolveUserScope(user);
     const groupBy: SsaGroupBy = params.groupBy ?? 'district';
     const currentFy = params.currentFy ?? getOperationalFY();
     const prevFy = params.prevFy ?? String(Number(currentFy) - 1);
 
-    const where: Prisma.SchoolWhereInput = { deletedAt: null, ...this.scope.aggregateSchoolWhere(scope) };
+    const where: Prisma.SchoolWhereInput = { deletedAt: null, ...this.scope.aggregateSchoolWhere(scope), ...geoWhere(params) };
     if (params.schoolType && params.schoolType !== 'all') where.schoolType = params.schoolType as Prisma.SchoolWhereInput['schoolType'];
     if (params.regionId) where.regionId = params.regionId;
     if (params.districtId) where.districtId = params.districtId;

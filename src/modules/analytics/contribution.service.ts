@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ScopeService, UserScope } from '../../common/scope/scope.service';
 import { AuthUser } from '../../common/auth/auth-user';
+import { geoWhere } from './analytics.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Contribution engine — "how much am I contributing to school improvement?"
@@ -32,6 +33,11 @@ export interface ContributionFilters {
   activityType?: string;
   projectId?: string;
   partnerId?: string;
+  // Name/key-based geography from the FE filter bar (resolved via relation
+  // filters) — so the contribution lens honours a selected region/district too.
+  region?: string;
+  district?: string;
+  cluster?: string;
 }
 
 const TRAINING_TYPES = ['training', 'school_improvement_training', 'cluster_training', 'core_training'];
@@ -74,7 +80,7 @@ export class ContributionService {
 
   // Resolve the schools that count toward this lens, enforcing scope.
   private async lensSchools(scope: UserScope, lens: Lens, f: ContributionFilters) {
-    const filterWhere: Prisma.SchoolWhereInput = { deletedAt: null };
+    const filterWhere: Prisma.SchoolWhereInput = { deletedAt: null, ...geoWhere(f) };
     if (f.districtId) filterWhere.districtId = f.districtId;
     if (f.clusterId) filterWhere.clusterId = f.clusterId;
     if (f.schoolType) filterWhere.schoolType = f.schoolType as Prisma.SchoolWhereInput['schoolType'];

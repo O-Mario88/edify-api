@@ -3,6 +3,15 @@ import { SsaGroupBy } from '../analytics.service';
 
 const GROUPS: SsaGroupBy[] = ['region', 'district', 'subCounty', 'cluster', 'cceo'];
 
+// Name-based geography filter as emitted by the FE filter bar (district *name*,
+// region *key* — resolved server-side via relation filters). Kept separate from
+// the cuid `*Id` fields so both calling styles validate under forbidNonWhitelisted.
+export class GeoFilterDto {
+  @IsOptional() @IsString() region?: string;
+  @IsOptional() @IsString() district?: string;
+  @IsOptional() @IsString() cluster?: string;
+}
+
 export class SsaPerformanceQueryDto {
   @IsOptional() @IsString() fy?: string;
   @IsOptional() @IsIn(GROUPS) groupBy?: SsaGroupBy;
@@ -10,6 +19,9 @@ export class SsaPerformanceQueryDto {
   @IsOptional() @IsString() regionId?: string;
   @IsOptional() @IsString() districtId?: string;
   @IsOptional() @IsString() clusterId?: string;
+  @IsOptional() @IsString() region?: string;
+  @IsOptional() @IsString() district?: string;
+  @IsOptional() @IsString() cluster?: string;
 }
 
 export class SsaDrilldownQueryDto {
@@ -27,4 +39,7 @@ export class InterventionImprovementQueryDto {
   @IsOptional() @IsString() regionId?: string;
   @IsOptional() @IsString() districtId?: string;
   @IsOptional() @IsString() clusterId?: string;
+  @IsOptional() @IsString() region?: string;
+  @IsOptional() @IsString() district?: string;
+  @IsOptional() @IsString() cluster?: string;
 }

@@ -5,7 +5,7 @@ import { ContributionService } from './contribution.service';
 import { CorrelationService } from './correlation.service';
 import { RecruitmentService } from './recruitment.service';
 import { ContributionQueryDto, ContributionDrilldownDto } from './dto/contribution-query.dto';
-import { SsaPerformanceQueryDto, SsaDrilldownQueryDto, InterventionImprovementQueryDto } from './dto/ssa-performance-query.dto';
+import { SsaPerformanceQueryDto, SsaDrilldownQueryDto, InterventionImprovementQueryDto, GeoFilterDto } from './dto/ssa-performance-query.dto';
 import { CorrelationQueryDto } from './dto/correlation-query.dto';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/rbac/permissions.guard';
@@ -35,12 +35,15 @@ export class AnalyticsController {
     return this.recruitment.recommendation(u, { fy, districtId });
   }
 
-  @Get('dashboard') dashboard(@CurrentUser() u: AuthUser) { return this.analytics.dashboardSummary(u); }
-  @Get('leadership-summary') leadershipSummary(@CurrentUser() u: AuthUser) { return this.analytics.leadershipSummary(u); }
-  @Get('districts') districts(@CurrentUser() u: AuthUser) { return this.analytics.districtRollups(u); }
-  @Get('coverage') coverage(@CurrentUser() u: AuthUser) { return this.analytics.coverageSummary(u); }
-  @Get('school-directory') directory(@CurrentUser() u: AuthUser) { return this.analytics.schoolDirectorySummary(u); }
-  @Get('ssa-performance') ssa(@CurrentUser() u: AuthUser) { return this.analytics.ssaPerformance(u); }
+  // The role-scoped summaries accept an OPTIONAL geography filter (region/district/
+  // cluster) so a selected geography narrows EVERY part of the page — not just the
+  // grouped tables. The filter only narrows within the caller's role scope.
+  @Get('dashboard') dashboard(@Query() g: GeoFilterDto, @CurrentUser() u: AuthUser) { return this.analytics.dashboardSummary(u, g); }
+  @Get('leadership-summary') leadershipSummary(@Query() g: GeoFilterDto, @CurrentUser() u: AuthUser) { return this.analytics.leadershipSummary(u, g); }
+  @Get('districts') districts(@Query() g: GeoFilterDto, @CurrentUser() u: AuthUser) { return this.analytics.districtRollups(u, g); }
+  @Get('coverage') coverage(@Query() g: GeoFilterDto, @CurrentUser() u: AuthUser) { return this.analytics.coverageSummary(u, g); }
+  @Get('school-directory') directory(@Query() g: GeoFilterDto, @CurrentUser() u: AuthUser) { return this.analytics.schoolDirectorySummary(u, g); }
+  @Get('ssa-performance') ssa(@Query() g: GeoFilterDto, @CurrentUser() u: AuthUser) { return this.analytics.ssaPerformance(u, g); }
 
   // SSA Performance = the average of EACH of the 8 interventions per group
   // (region|district|subCounty|cluster|cceo), Client+Core by default. Drillable.
@@ -76,7 +79,7 @@ export class AnalyticsController {
   staffVsPartner(@Query() q: CorrelationQueryDto, @CurrentUser() u: AuthUser) {
     return this.correlation.staffVsPartner(u, q);
   }
-  @Get('activity-pipeline') pipeline(@CurrentUser() u: AuthUser) { return this.analytics.activityPipeline(u); }
+  @Get('activity-pipeline') pipeline(@Query() g: GeoFilterDto, @CurrentUser() u: AuthUser) { return this.analytics.activityPipeline(u, g); }
 
   // Scope-aware contribution ("how much am I contributing?"). lens = own|team|combined.
   @Get('contribution-summary')

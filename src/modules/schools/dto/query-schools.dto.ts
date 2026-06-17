@@ -45,4 +45,15 @@ export class QuerySchoolsDto extends PaginationDto {
   @IsOptional()
   @IsString()
   accountOwnerStatus?: string;
+
+  // Name/key-based geography filter as emitted by the FE filter bar (district
+  // *name*, region *key*) — resolved server-side via relation filters so the
+  // directory narrows the FULL universe, not just the current ≤200-row page.
+  @IsOptional()
+  @IsString()
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  region?: string;
 }

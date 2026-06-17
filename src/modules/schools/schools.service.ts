@@ -248,6 +248,10 @@ export class SchoolsService {
     }
     if (query.regionId) where.regionId = query.regionId;
     if (query.districtId) where.districtId = query.districtId;
+    // Name/key-based geography (FE filter bar) — relation filters, ANDed within
+    // the role scope so they only narrow. `__all__` is the FE "no filter" sentinel.
+    if (query.district && query.district !== '__all__') where.district = { name: query.district };
+    if (query.region && query.region !== '__all__') where.region = { name: { equals: query.region, mode: 'insensitive' } };
     if (query.subCountyId) where.subCountyId = query.subCountyId;
     if (query.clusterId) where.clusterId = query.clusterId;
     if (query.clusterStatus) where.clusterStatus = query.clusterStatus as Prisma.SchoolWhereInput['clusterStatus'];
