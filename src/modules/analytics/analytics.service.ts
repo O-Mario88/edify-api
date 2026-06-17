@@ -355,15 +355,35 @@ export class AnalyticsService {
     })).sort((a, b) => b.schools - a.schools);
 
     const totalSchools = districts.reduce((a, d) => a + d.schools, 0);
+    // National roll-up for the default (country) detail panel: per-intervention
+    // averages, weakest two, total clusters, and the national SSA average.
+    const natIntv = new Map<string, { sum: number; n: number }>();
+    let natSsaSum = 0, natSsaN = 0, natClusters = 0;
+    for (const d of map.values()) {
+      natClusters += d.clusterIds.size; natSsaSum += d.ssaSum; natSsaN += d.ssaN;
+      for (const [k, v] of d.intv) { const e = natIntv.get(k) ?? { sum: 0, n: 0 }; e.sum += v.sum; e.n += v.n; natIntv.set(k, e); }
+    }
+    const nationalInterventions = INTERVENTION_META.map((m) => {
+      const v = natIntv.get(m.key);
+      return { key: m.key as string, label: m.label, avg: v && v.n ? Math.round((v.sum / v.n) * 10) / 10 : null };
+    });
+    const nationalWeakest = nationalInterventions
+      .filter((i): i is { key: string; label: string; avg: number } => i.avg != null)
+      .sort((a, b) => a.avg - b.avg || a.key.localeCompare(b.key)).slice(0, 2);
+    const ssaDone = districts.reduce((a, d) => a + d.ssaDone, 0);
     return {
       fy,
       summary: {
         districts: districts.length, subRegions: subRegions.length,
         schools: totalSchools, coreSchools: districts.reduce((a, d) => a + d.coreSchools, 0),
-        clustered: districts.reduce((a, d) => a + d.clustered, 0),
+        clientSchools: totalSchools - districts.reduce((a, d) => a + d.coreSchools, 0),
+        clustered: districts.reduce((a, d) => a + d.clustered, 0), clusters: natClusters,
+        ssaDone, ssaPending: totalSchools - ssaDone,
+        avgSsa: natSsaN ? Math.round((natSsaSum / natSsaN) * 10) / 10 : null,
         criticalSchools: districts.reduce((a, d) => a + d.criticalCount, 0),
         highRiskDistricts: districts.filter((d) => d.status === 'high_risk').length,
         activitiesCompleted: districts.reduce((a, d) => a + d.activitiesCompleted, 0),
+        interventions: nationalInterventions, weakestInterventions: nationalWeakest,
       },
       districts,
       subRegions,
@@ -371,41 +391,59 @@ export class AnalyticsService {
     };
   }
 
-  // Lazy district detail for the map drawer — the clusters in a district, each
-  // with its OWN SSA average and the single intervention IT is weakest in (not
-  // all clusters struggle with the same thing). Role-scoped to the caller.
+  // Lazy district detail for the map — the CLUSTERS in a district (each with its
+  // own SSA avg + weakest intervention) AND the per-SUB-COUNTY breakdown (schools,
+  // client, core, clusters, SSA avg + weakest) so the sub-county hover/panel shows
+  // that specific sub-county, not the whole district. Role-scoped to the caller.
   async geoMapDistrictDetail(user: AuthUser, districtId: string) {
     const scope = await this.scope.resolveUserScope(user);
     const where: Prisma.SchoolWhereInput = { ...this.schoolScope(scope), districtId };
     const schools = await this.prisma.school.findMany({
-      where: { ...where, clusterId: { not: null } },
+      where,
       select: {
-        clusterId: true, cluster: { select: { name: true } },
+        clusterId: true, schoolType: true,
+        cluster: { select: { name: true } },
+        subCounty: { select: { name: true } },
         ssaRecords: { where: { deletedAt: null, fy: getOperationalFY() }, orderBy: { dateOfSsa: 'desc' }, take: 1, select: { averageScore: true, scores: { select: { intervention: true, score: true } } } },
       },
     });
     const intvLabel = (k: string) => INTERVENTION_META.find((m) => m.key === k)?.label ?? k;
-    type C = { id: string; name: string; schools: number; ssaSum: number; ssaN: number; intv: Map<string, { sum: number; n: number }> };
-    const map = new Map<string, C>();
-    for (const s of schools) {
-      if (!s.clusterId) continue;
-      const cur = map.get(s.clusterId) ?? { id: s.clusterId, name: s.cluster?.name ?? 'Cluster', schools: 0, ssaSum: 0, ssaN: 0, intv: new Map() };
-      cur.schools++;
-      const rec = s.ssaRecords[0];
-      if (rec?.averageScore != null) { cur.ssaSum += rec.averageScore; cur.ssaN++; }
-      for (const sc of rec?.scores ?? []) {
-        const e = cur.intv.get(sc.intervention) ?? { sum: 0, n: 0 };
-        e.sum += sc.score; e.n++; cur.intv.set(sc.intervention, e);
-      }
-      map.set(s.clusterId, cur);
-    }
-    const clusters = [...map.values()].map((c) => {
-      const weakest = [...c.intv.entries()]
-        .map(([k, v]) => ({ key: k, label: intvLabel(k), avg: Math.round((v.sum / v.n) * 10) / 10 }))
+    const weakestOf = (intv: Map<string, { sum: number; n: number }>) =>
+      [...intv.entries()].map(([k, v]) => ({ key: k, label: intvLabel(k), avg: Math.round((v.sum / v.n) * 10) / 10 }))
         .sort((a, b) => a.avg - b.avg || a.key.localeCompare(b.key))[0] ?? null;
-      return { id: c.id, name: c.name, schools: c.schools, avgSsa: c.ssaN ? Math.round((c.ssaSum / c.ssaN) * 10) / 10 : null, weakest };
-    }).sort((a, b) => (a.avgSsa ?? 99) - (b.avgSsa ?? 99));
-    return { districtId, clusters };
+
+    type Cl = { id: string; name: string; schools: number; ssaSum: number; ssaN: number; intv: Map<string, { sum: number; n: number }> };
+    type Sc = { name: string; schools: number; core: number; ssaSum: number; ssaN: number; clusterIds: Set<string>; intv: Map<string, { sum: number; n: number }> };
+    const clMap = new Map<string, Cl>();
+    const scMap = new Map<string, Sc>();
+    for (const s of schools) {
+      const rec = s.ssaRecords[0];
+      if (s.clusterId) {
+        const c = clMap.get(s.clusterId) ?? { id: s.clusterId, name: s.cluster?.name ?? 'Cluster', schools: 0, ssaSum: 0, ssaN: 0, intv: new Map() };
+        c.schools++;
+        if (rec?.averageScore != null) { c.ssaSum += rec.averageScore; c.ssaN++; }
+        for (const sc of rec?.scores ?? []) { const e = c.intv.get(sc.intervention) ?? { sum: 0, n: 0 }; e.sum += sc.score; e.n++; c.intv.set(sc.intervention, e); }
+        clMap.set(s.clusterId, c);
+      }
+      const scName = s.subCounty?.name;
+      if (scName) {
+        const sc = scMap.get(scName) ?? { name: scName, schools: 0, core: 0, ssaSum: 0, ssaN: 0, clusterIds: new Set(), intv: new Map() };
+        sc.schools++;
+        if (s.schoolType === 'core') sc.core++;
+        if (s.clusterId) sc.clusterIds.add(s.clusterId);
+        if (rec?.averageScore != null) { sc.ssaSum += rec.averageScore; sc.ssaN++; }
+        for (const x of rec?.scores ?? []) { const e = sc.intv.get(x.intervention) ?? { sum: 0, n: 0 }; e.sum += x.score; e.n++; sc.intv.set(x.intervention, e); }
+        scMap.set(scName, sc);
+      }
+    }
+    const clusters = [...clMap.values()].map((c) => ({
+      id: c.id, name: c.name, schools: c.schools, avgSsa: c.ssaN ? Math.round((c.ssaSum / c.ssaN) * 10) / 10 : null, weakest: weakestOf(c.intv),
+    })).sort((a, b) => (a.avgSsa ?? 99) - (b.avgSsa ?? 99));
+    const subCounties = [...scMap.values()].map((s) => ({
+      name: s.name, schools: s.schools, coreSchools: s.core, clientSchools: s.schools - s.core,
+      clusters: s.clusterIds.size, avgSsa: s.ssaN ? Math.round((s.ssaSum / s.ssaN) * 10) / 10 : null, weakest: weakestOf(s.intv),
+    })).sort((a, b) => b.schools - a.schools);
+    return { districtId, clusters, subCounties };
   }
 
   // Client-school coverage — real counts of client schools, how many have an
