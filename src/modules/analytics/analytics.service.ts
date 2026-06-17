@@ -207,6 +207,43 @@ export class AnalyticsService {
     };
   }
 
+  // Client-school coverage — real counts of client schools, how many have an
+  // account owner, and which are below the SSA support threshold (avg < 5) and so
+  // most need coverage/support. Replaces the fabricated coverage mock.
+  async coverageSummary(user: AuthUser) {
+    const scope = await this.scope.resolveUserScope(user);
+    const where = this.schoolScope(scope);
+    const fy = getOperationalFY();
+    const clientSchools = await this.prisma.school.findMany({
+      where: { ...where, schoolType: 'client' },
+      select: {
+        schoolId: true, name: true, accountOwnerId: true,
+        district: { select: { name: true } },
+        accountOwner: { select: { user: { select: { name: true } } } },
+        ssaRecords: { where: { deletedAt: null, fy }, orderBy: { dateOfSsa: 'desc' }, take: 1, select: { averageScore: true } },
+      },
+    });
+    const total = clientSchools.length;
+    const assigned = clientSchools.filter((s) => s.accountOwnerId).length;
+    const scored = clientSchools.map((s) => ({ s, avg: s.ssaRecords[0]?.averageScore ?? null }));
+    const below = scored.filter((x) => x.avg != null && x.avg < 5);
+    return {
+      totalClientSchools: total,
+      assigned, unassigned: total - assigned,
+      coveragePct: total ? Math.round((assigned / total) * 100) : 0,
+      schoolsBelowSsaThreshold: below.length,
+      priority: below
+        .sort((a, b) => (a.avg ?? 10) - (b.avg ?? 10))
+        .slice(0, 25)
+        .map((x) => ({
+          schoolId: x.s.schoolId, name: x.s.name,
+          district: x.s.district?.name ?? '',
+          owner: x.s.accountOwner?.user?.name ?? 'Unassigned',
+          avgSsa: x.avg,
+        })),
+    };
+  }
+
   // ── SSA Performance by group (the average of EACH of the 8 interventions) ──
   // Starts from School Directory, joins the latest SSA per school in the FY,
   // scopes by the caller, includes Client + Core by default. Drillable.
