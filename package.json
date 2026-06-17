@@ -17,6 +17,7 @@
     "reset": "ts-node --transpile-only scripts/reset-online-test.ts",
     "validate": "ts-node --transpile-only scripts/validate-online-test.ts",
     "trim:users": "ts-node --transpile-only scripts/trim-users-online-test.ts",
+    "geo:subregions": "ts-node --transpile-only scripts/geo-subregions.ts",
     "geo:import": "ts-node --transpile-only scripts/geo-import.ts",
     "geo:map-schools": "ts-node --transpile-only scripts/geo-map-schools.ts",
     "geo:verify": "ts-node --transpile-only scripts/geo-verify.ts",

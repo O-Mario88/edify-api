@@ -42,6 +42,9 @@ export class AnalyticsController {
   @Get('leadership-summary') leadershipSummary(@Query() g: GeoFilterDto, @CurrentUser() u: AuthUser) { return this.analytics.leadershipSummary(u, g); }
   @Get('districts') districts(@Query() g: GeoFilterDto, @CurrentUser() u: AuthUser) { return this.analytics.districtRollups(u, g); }
   @Get('coverage') coverage(@Query() g: GeoFilterDto, @CurrentUser() u: AuthUser) { return this.analytics.coverageSummary(u, g); }
+  // Geo-analytics map — per-district + sub-region leadership metrics keyed by
+  // official COD-AB pcode (joins boundary geometry on the frontend). Role-scoped.
+  @Get('geo-map') geoMap(@Query() g: GeoFilterDto, @CurrentUser() u: AuthUser) { return this.analytics.geoMapDistricts(u, g); }
   @Get('school-directory') directory(@Query() g: GeoFilterDto, @CurrentUser() u: AuthUser) { return this.analytics.schoolDirectorySummary(u, g); }
   @Get('ssa-performance') ssa(@Query() g: GeoFilterDto, @CurrentUser() u: AuthUser) { return this.analytics.ssaPerformance(u, g); }
 

@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ScopeService, UserScope } from '../../common/scope/scope.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { getOperationalFY } from '../../common/fy/fy.util';
+import { districtStatus } from './geo-status';
 
 // The official 8 SSA interventions (display order + code), mapped from the stored
 // SsaIntervention enum. SSA Performance is the average of EACH of these per group
@@ -234,6 +235,108 @@ export class AnalyticsService {
         ssaDone: d.ssaDone, ssaPct: d.schools ? Math.round((d.ssaDone / d.schools) * 100) : 0,
         avgSsa: d.ssaN ? Math.round((d.ssaSum / d.ssaN) * 10) / 10 : 0,
       })).sort((a, b) => b.schools - a.schools),
+    };
+  }
+
+  // Geo-analytics map — per-district leadership metrics keyed by the official
+  // COD-AB pcode (so the frontend choropleth joins real boundary geometry to real
+  // data), plus sub-region rollups and a national summary. Role-scoped +
+  // filter-aware via the shared geo where; every number is a live aggregate.
+  async geoMapDistricts(user: AuthUser, geo?: GeoFilter) {
+    const scope = await this.scope.resolveUserScope(user);
+    const where = this.schoolScope(scope, geo);
+    const fy = getOperationalFY();
+    const schools = await this.prisma.school.findMany({
+      where,
+      select: {
+        id: true, districtId: true, schoolType: true, clusterStatus: true, currentFySsaStatus: true,
+        district: { select: { name: true, pcode: true, region: { select: { name: true } }, subRegion: { select: { name: true } } } },
+        ssaRecords: { where: { deletedAt: null, fy }, orderBy: { dateOfSsa: 'desc' }, take: 1, select: { averageScore: true } },
+      },
+    });
+    type Acc = {
+      districtId: string; name: string; pcode: string | null; region: string; subRegion: string | null;
+      schools: number; core: number; clustered: number; ssaDone: number; ssaSum: number; ssaN: number;
+      critical: number; schoolIds: string[];
+    };
+    const map = new Map<string, Acc>();
+    for (const s of schools) {
+      const cur: Acc = map.get(s.districtId) ?? {
+        districtId: s.districtId, name: s.district?.name ?? 'District', pcode: s.district?.pcode ?? null,
+        region: s.district?.region?.name ?? '', subRegion: s.district?.subRegion?.name ?? null,
+        schools: 0, core: 0, clustered: 0, ssaDone: 0, ssaSum: 0, ssaN: 0, critical: 0, schoolIds: [],
+      };
+      cur.schools++;
+      cur.schoolIds.push(s.id);
+      if (s.schoolType === 'core') cur.core++;
+      if (s.clusterStatus === 'clustered') cur.clustered++;
+      if (s.currentFySsaStatus === 'done') cur.ssaDone++;
+      const avg = s.ssaRecords[0]?.averageScore;
+      if (avg != null) { cur.ssaSum += avg; cur.ssaN++; if (avg < 5) cur.critical++; }
+      map.set(s.districtId, cur);
+    }
+
+    // Completed activities per district (one grouped query over the scoped schools).
+    const allSchoolIds = schools.map((s) => s.id);
+    const completedBySchool = allSchoolIds.length
+      ? await this.prisma.activity.groupBy({
+          by: ['schoolId'],
+          where: { deletedAt: null, status: 'completed', schoolId: { in: allSchoolIds } },
+          _count: true,
+        })
+      : [];
+    const completedMap = new Map(completedBySchool.map((g) => [g.schoolId, g._count]));
+    const activitiesByDistrict = new Map<string, number>();
+    for (const s of schools) {
+      const n = completedMap.get(s.id) ?? 0;
+      if (n) activitiesByDistrict.set(s.districtId, (activitiesByDistrict.get(s.districtId) ?? 0) + n);
+    }
+
+    const districts = [...map.values()].map((d) => {
+      const avgSsa = d.ssaN ? Math.round((d.ssaSum / d.ssaN) * 10) / 10 : null;
+      // Leadership status — combines weak average with a critical-school share.
+      const status = districtStatus(avgSsa, d.schools, d.critical);
+      return {
+        districtId: d.districtId, pcode: d.pcode, district: d.name, region: d.region, subRegion: d.subRegion,
+        schools: d.schools, coreSchools: d.core, clientSchools: d.schools - d.core,
+        clustered: d.clustered, unclustered: d.schools - d.clustered,
+        ssaDone: d.ssaDone, ssaPending: d.schools - d.ssaDone,
+        ssaPct: d.schools ? Math.round((d.ssaDone / d.schools) * 100) : 0,
+        avgSsa, criticalCount: d.critical,
+        activitiesCompleted: activitiesByDistrict.get(d.districtId) ?? 0,
+        status,
+      };
+    }).sort((a, b) => b.schools - a.schools);
+
+    // Sub-region rollups (aggregate the districts).
+    const srMap = new Map<string, { subRegion: string; region: string; districts: number; schools: number; core: number; clustered: number; ssaSum: number; ssaN: number; critical: number; activities: number }>();
+    for (const d of districts) {
+      if (!d.subRegion) continue;
+      const cur = srMap.get(d.subRegion) ?? { subRegion: d.subRegion, region: d.region, districts: 0, schools: 0, core: 0, clustered: 0, ssaSum: 0, ssaN: 0, critical: 0, activities: 0 };
+      cur.districts++; cur.schools += d.schools; cur.core += d.coreSchools; cur.clustered += d.clustered;
+      if (d.avgSsa != null) { cur.ssaSum += d.avgSsa; cur.ssaN++; }
+      cur.critical += d.criticalCount; cur.activities += d.activitiesCompleted;
+      srMap.set(d.subRegion, cur);
+    }
+    const subRegions = [...srMap.values()].map((s) => ({
+      subRegion: s.subRegion, region: s.region, districts: s.districts, schools: s.schools, coreSchools: s.core,
+      clustered: s.clustered, avgSsa: s.ssaN ? Math.round((s.ssaSum / s.ssaN) * 10) / 10 : null,
+      criticalCount: s.critical, activitiesCompleted: s.activities,
+    })).sort((a, b) => b.schools - a.schools);
+
+    const totalSchools = districts.reduce((a, d) => a + d.schools, 0);
+    return {
+      fy,
+      summary: {
+        districts: districts.length, subRegions: subRegions.length,
+        schools: totalSchools, coreSchools: districts.reduce((a, d) => a + d.coreSchools, 0),
+        clustered: districts.reduce((a, d) => a + d.clustered, 0),
+        criticalSchools: districts.reduce((a, d) => a + d.criticalCount, 0),
+        highRiskDistricts: districts.filter((d) => d.status === 'high_risk').length,
+        activitiesCompleted: districts.reduce((a, d) => a + d.activitiesCompleted, 0),
+      },
+      districts,
+      subRegions,
     };
   }
 
