@@ -313,10 +313,16 @@ export class AnalyticsService {
       const avgSsa = d.ssaN ? Math.round((d.ssaSum / d.ssaN) * 10) / 10 : null;
       // Leadership status — combines weak average with a critical-school share.
       const status = districtStatus(avgSsa, d.schools, d.critical);
-      // The 2 interventions the whole district is weakest in (lowest district
-      // averages), deterministic tie-break by intervention key.
-      const weakestInterventions = [...d.intv.entries()]
-        .map(([k, v]) => ({ key: k, label: intvLabel(k), avg: Math.round((v.sum / v.n) * 10) / 10 }))
+      // Full per-intervention district averages — all 8 in canonical order
+      // (null where no school has been scored on it yet), so each district shows
+      // performance in EVERY intervention, not just one overall average.
+      const interventions = INTERVENTION_META.map((m) => {
+        const v = d.intv.get(m.key);
+        return { key: m.key as string, label: m.label, avg: v && v.n ? Math.round((v.sum / v.n) * 10) / 10 : null };
+      });
+      // The 2 weakest (lowest district averages), deterministic tie-break.
+      const weakestInterventions = interventions
+        .filter((i): i is { key: string; label: string; avg: number } => i.avg != null)
         .sort((a, b) => a.avg - b.avg || a.key.localeCompare(b.key))
         .slice(0, 2);
       return {
@@ -328,7 +334,7 @@ export class AnalyticsService {
         ssaPct: d.schools ? Math.round((d.ssaDone / d.schools) * 100) : 0,
         avgSsa, criticalCount: d.critical,
         activitiesCompleted: activitiesByDistrict.get(d.districtId) ?? 0,
-        status, weakestInterventions,
+        status, interventions, weakestInterventions,
       };
     }).sort((a, b) => b.schools - a.schools);
 
