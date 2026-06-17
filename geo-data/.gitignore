@@ -1,0 +1,5 @@
+# Large source binaries — re-downloadable from the HDX URL in metadata; not committed.
+*.gdb.zip
+*.gdb/
+.venv/
+__pycache__/

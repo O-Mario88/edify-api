@@ -244,32 +244,32 @@ enum StaffOnboardingState {
 // ─────────────────────── Auth / RBAC ───────────────────────
 
 model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  passwordHash String
-  name         String
-  roles        EdifyRole[]
-  activeRole   EdifyRole
-  isActive     Boolean   @default(true)
+  id                     String        @id @default(cuid())
+  email                  String        @unique
+  passwordHash           String
+  name                   String
+  roles                  EdifyRole[]
+  activeRole             EdifyRole
+  isActive               Boolean       @default(true)
   // Brute-force protection: lock after repeated failures (auth.service).
-  failedLoginCount Int      @default(0)
-  lockedUntil      DateTime?
+  failedLoginCount       Int           @default(0)
+  lockedUntil            DateTime?
   // MFA seam (Phase 8 design): high-risk roles enrol TOTP; secret is stored
   // encrypted (field-crypto) when enrolment ships.
-  mfaEnabled       Boolean  @default(false)
-  mfaSecret        String?
+  mfaEnabled             Boolean       @default(false)
+  mfaSecret              String?
   // Password-reset seam: store only a HASH of the reset token + its expiry.
   passwordResetTokenHash String?
   passwordResetExpires   DateTime?
-  staffProfile StaffProfile?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  deletedAt    DateTime?
+  staffProfile           StaffProfile?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+  deletedAt              DateTime?
 
-  auditLogs    AuditLog[]   @relation("AuditActor")
+  auditLogs     AuditLog[]     @relation("AuditActor")
   notifications Notification[]
-  sentMessages Message[]    @relation("MessageSender")
-  partner      Partner?
+  sentMessages  Message[]      @relation("MessageSender")
+  partner       Partner?
 }
 
 model Permission {
@@ -293,47 +293,47 @@ model RolePermission {
 // ─────────────────────── Staff / Supervisors ───────────────────────
 
 model StaffProfile {
-  id              String   @id @default(cuid())
-  user            User     @relation(fields: [userId], references: [id])
-  userId          String   @unique
-  staffNumber     String?  @unique
-  title           String?
-  primaryDistrict District? @relation("StaffPrimaryDistrict", fields: [primaryDistrictId], references: [id])
+  id                String               @id @default(cuid())
+  user              User                 @relation(fields: [userId], references: [id])
+  userId            String               @unique
+  staffNumber       String?              @unique
+  title             String?
+  primaryDistrict   District?            @relation("StaffPrimaryDistrict", fields: [primaryDistrictId], references: [id])
   primaryDistrictId String?
-  onboardingState StaffOnboardingState @default(pending)
+  onboardingState   StaffOnboardingState @default(pending)
 
-  supervisorLinks   StaffSupervisorAssignment[] @relation("Supervisee")
-  superviseeLinks   StaffSupervisorAssignment[] @relation("Supervisor")
-  geographyLinks    StaffGeographyAssignment[]
-  schoolLinks       StaffSchoolAssignment[]
-  targetProfiles    StaffTargetProfile[]
-  supportCapacities StaffSupportCapacity[]
-  ownedSchools      School[]   @relation("SchoolAccountOwner")
-  responsibleActivities Activity[] @relation("ActivityResponsible")
-  monitoredActivities   Activity[] @relation("ActivityMonitor")
-  leaves            Leave[]
-  contextProfiles   StaffContextProfile[]
+  supervisorLinks       StaffSupervisorAssignment[] @relation("Supervisee")
+  superviseeLinks       StaffSupervisorAssignment[] @relation("Supervisor")
+  geographyLinks        StaffGeographyAssignment[]
+  schoolLinks           StaffSchoolAssignment[]
+  targetProfiles        StaffTargetProfile[]
+  supportCapacities     StaffSupportCapacity[]
+  ownedSchools          School[]                    @relation("SchoolAccountOwner")
+  responsibleActivities Activity[]                  @relation("ActivityResponsible")
+  monitoredActivities   Activity[]                  @relation("ActivityMonitor")
+  leaves                Leave[]
+  contextProfiles       StaffContextProfile[]
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  deletedAt       DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
 }
 
 // HR — staff leave requests (annual / sick / compassionate / unpaid).
 model Leave {
-  id             String   @id @default(cuid())
-  staff          StaffProfile @relation(fields: [staffProfileId], references: [id])
-  staffProfileId String
-  type           String   // annual | sick | compassionate | unpaid
-  startDate      String   // ISO date
-  endDate        String
-  days           Int
-  status         String   @default("pending") // pending | approved | rejected
-  reason         String?
+  id               String       @id @default(cuid())
+  staff            StaffProfile @relation(fields: [staffProfileId], references: [id])
+  staffProfileId   String
+  type             String // annual | sick | compassionate | unpaid
+  startDate        String // ISO date
+  endDate          String
+  days             Int
+  status           String       @default("pending") // pending | approved | rejected
+  reason           String?
   reviewedByUserId String?
-  reviewedAt     DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  reviewedAt       DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
 
   @@index([staffProfileId])
   @@index([status])
@@ -343,7 +343,7 @@ model Leave {
 model Report {
   id              String   @id @default(cuid())
   title           String
-  type            String   // program_summary | ssa_performance | activity_pipeline
+  type            String // program_summary | ssa_performance | activity_pipeline
   fy              String
   scope           String   @default("country")
   createdByUserId String?
@@ -397,19 +397,19 @@ model StaffSchoolAssignment {
 // per FY. Once reached, self-assignment to a NEW school is blocked and partner
 // assignment becomes the route. Partners are NOT capped.
 model StaffSupportCapacity {
-  id                       String       @id @default(cuid())
-  staff                    StaffProfile @relation(fields: [staffId], references: [id])
-  staffId                  String
-  fy                       String       // "2026"
+  id                        String       @id @default(cuid())
+  staff                     StaffProfile @relation(fields: [staffId], references: [id])
+  staffId                   String
+  fy                        String // "2026"
   maxDirectSchoolsSupported Int
-  setByUserId              String       // CD/IA who set it
-  setByRole                EdifyRole    // CountryDirector | ImpactAssessment
-  effectiveFrom            DateTime?
-  effectiveTo              DateTime?
-  notes                    String?
-  isActive                 Boolean      @default(true)
-  createdAt                DateTime     @default(now())
-  updatedAt                DateTime     @updatedAt
+  setByUserId               String // CD/IA who set it
+  setByRole                 EdifyRole // CountryDirector | ImpactAssessment
+  effectiveFrom             DateTime?
+  effectiveTo               DateTime?
+  notes                     String?
+  isActive                  Boolean      @default(true)
+  createdAt                 DateTime     @default(now())
+  updatedAt                 DateTime     @updatedAt
 
   @@unique([staffId, fy])
   @@index([fy])
@@ -417,20 +417,20 @@ model StaffSupportCapacity {
 
 // Every assignment attempt — allowed or blocked — for accountability (spec §20).
 model AssignmentAudit {
-  id              String   @id @default(cuid())
-  action          String   // "assign.self" | "assign.partner" | "assign.staff"
-  schoolId        String?
-  activityId      String?
-  assignerId      String
-  assignerRole    EdifyRole
-  assignedToType  String   // "staff" | "partner"
-  assignedStaffId String?
+  id                String    @id @default(cuid())
+  action            String // "assign.self" | "assign.partner" | "assign.staff"
+  schoolId          String?
+  activityId        String?
+  assignerId        String
+  assignerRole      EdifyRole
+  assignedToType    String // "staff" | "partner"
+  assignedStaffId   String?
   assignedPartnerId String?
-  allowed         Boolean
-  blockedReason   String?
-  overrideUsed    Boolean  @default(false)
-  overrideReason  String?
-  createdAt       DateTime @default(now())
+  allowed           Boolean
+  blockedReason     String?
+  overrideUsed      Boolean   @default(false)
+  overrideReason    String?
+  createdAt         DateTime  @default(now())
 
   @@index([assignerId])
   @@index([schoolId])
@@ -438,14 +438,14 @@ model AssignmentAudit {
 }
 
 model StaffTargetProfile {
-  id        String       @id @default(cuid())
-  staff     StaffProfile @relation(fields: [staffId], references: [id])
-  staffId   String
-  fy        String       // "2026"
-  visitsTarget    Int    @default(0)
-  trainingsTarget Int    @default(0)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  id              String       @id @default(cuid())
+  staff           StaffProfile @relation(fields: [staffId], references: [id])
+  staffId         String
+  fy              String // "2026"
+  visitsTarget    Int          @default(0)
+  trainingsTarget Int          @default(0)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
   @@unique([staffId, fy])
 }
@@ -453,48 +453,103 @@ model StaffTargetProfile {
 // ─────────────────────── Geography ───────────────────────
 
 model Region {
-  id        String     @id @default(cuid())
-  name      String     @unique
-  code      String?    @unique
-  districts District[]
-  schools   School[]
-  clusters  Cluster[]
-  staffGeo  StaffGeographyAssignment[]
-  createdAt DateTime   @default(now())
-}
-
-model District {
-  id         String      @id @default(cuid())
-  name       String
-  code       String?     @unique // canonical UG-D-* id
-  region     Region      @relation(fields: [regionId], references: [id])
-  regionId   String
-  subCounties SubCounty[]
+  id         String                     @id @default(cuid())
+  name       String                     @unique
+  code       String?                    @unique
+  // Official COD-AB fields (HDX/OCHA). pcode e.g. "UG3" (Northern).
+  pcode      String?                    @unique
+  source     String? // "COD-AB" once imported from the official boundary file
+  latitude   Float?
+  longitude  Float?
+  districts  District[]
+  subRegions SubRegion[]
   schools    School[]
   clusters   Cluster[]
   staffGeo   StaffGeographyAssignment[]
-  staffPrimary StaffProfile[] @relation("StaffPrimaryDistrict")
+  createdAt  DateTime                   @default(now())
+}
+
+// Sub-region (e.g. Lango, Acholi) — NOT an admin level in COD-AB. A CONTROLLED
+// organizational mapping layer with explicit confidence + audit, never confused
+// with the official boundary source. Districts link via subRegionId; uncertain
+// links stay REVIEW_REQUIRED.
+model SubRegion {
+  id             String     @id @default(cuid())
+  region         Region     @relation(fields: [regionId], references: [id])
+  regionId       String
+  name           String     @unique
+  normalizedName String
+  source         String     @default("CONTROLLED")
+  confidence     String     @default("REVIEW_REQUIRED") // VERIFIED | REVIEW_REQUIRED
+  verifiedBy     String?
+  verifiedAt     DateTime?
+  notes          String?
+  districts      District[]
+  createdAt      DateTime   @default(now())
+}
+
+model District {
+  id           String                     @id @default(cuid())
+  name         String
+  code         String?                    @unique // canonical UG-D-* id
+  // Official COD-AB fields. pcode e.g. "UG3083" (Lira).
+  pcode        String?                    @unique
+  source       String?
+  region       Region                     @relation(fields: [regionId], references: [id])
+  regionId     String
+  subRegion    SubRegion?                 @relation(fields: [subRegionId], references: [id])
+  subRegionId  String?
+  counties     County[]
+  subCounties  SubCounty[]
+  schools      School[]
+  clusters     Cluster[]
+  staffGeo     StaffGeographyAssignment[]
+  staffPrimary StaffProfile[]             @relation("StaffPrimaryDistrict")
   // Approx district centroid — feeds the Leadership context-fairness travel
   // burden (haversine spread across a staff member's covered districts). Null
   // until seeded, in which case travel burden stays "insufficient data".
-  latitude   Float?
-  longitude  Float?
-  createdAt  DateTime    @default(now())
+  latitude     Float?
+  longitude    Float?
+  createdAt    DateTime                   @default(now())
 
   @@unique([regionId, name])
 }
 
+// County (COD-AB admin3) — the level between District and Sub-county.
+model County {
+  id             String      @id @default(cuid())
+  district       District    @relation(fields: [districtId], references: [id])
+  districtId     String
+  name           String
+  normalizedName String
+  pcode          String?     @unique
+  source         String?
+  latitude       Float?
+  longitude      Float?
+  subCounties    SubCounty[]
+  createdAt      DateTime    @default(now())
+
+  @@unique([districtId, name])
+}
+
 model SubCounty {
-  id         String    @id @default(cuid())
-  name       String
-  seeded     Boolean   @default(false) // true = temporary dev fixture (replace with official data)
-  district   District  @relation(fields: [districtId], references: [id])
-  districtId String
-  parishes   Parish[]
-  schools    School[]
-  clusters   Cluster[]
+  id           String             @id @default(cuid())
+  name         String
+  seeded       Boolean            @default(false) // true = temporary dev fixture (replace with official data)
+  // Official COD-AB fields. pcode e.g. "UG30830101".
+  pcode        String?            @unique
+  source       String?
+  latitude     Float?
+  longitude    Float?
+  district     District           @relation(fields: [districtId], references: [id])
+  districtId   String
+  county       County?            @relation(fields: [countyId], references: [id])
+  countyId     String?
+  parishes     Parish[]
+  schools      School[]
+  clusters     Cluster[]
   clusterLinks ClusterSubCounty[]
-  createdAt  DateTime  @default(now())
+  createdAt    DateTime           @default(now())
 
   @@unique([districtId, name])
 }
@@ -502,6 +557,11 @@ model SubCounty {
 model Parish {
   id          String    @id @default(cuid())
   name        String
+  // Parishes are NOT in COD-AB — this table stays empty until an official parish
+  // source is imported. pcode/source/confidence track provenance when it is.
+  pcode       String?   @unique
+  source      String?
+  confidence  String? // NOT_IN_BOUNDARY_SOURCE until verified
   subCounty   SubCounty @relation(fields: [subCountyId], references: [id])
   subCountyId String
   schools     School[]
@@ -510,20 +570,63 @@ model Parish {
   @@unique([subCountyId, name])
 }
 
+// Alias / known spelling variant for any admin level — drives tolerant matching
+// of free-text school uploads without silent fuzzy guesswork.
+model GeographyAlias {
+  id              String   @id @default(cuid())
+  adminLevel      String // region | subRegion | district | county | subCounty | parish
+  adminId         String
+  alias           String
+  normalizedAlias String
+  source          String?
+  confidence      String? // EXACT | ALIAS | FUZZY_HIGH
+  createdAt       DateTime @default(now())
+
+  @@unique([adminLevel, normalizedAlias])
+  @@index([adminLevel, adminId])
+}
+
+// Audit record for each official boundary import — provenance + integrity.
+model BoundaryImportRun {
+  id                 String   @id @default(cuid())
+  sourceName         String
+  sourceUrl          String?
+  sourceLastModified String?
+  importedAt         DateTime @default(now())
+  importedBy         String?
+  levelCounts        Json // { region, district, county, subCounty, parish }
+  checksum           String?
+  status             String // SUCCESS | PARTIAL | FAILED
+  errors             Json?
+  warnings           Json?
+}
+
 // ─────────────────────── School Directory ───────────────────────
 
 model School {
-  id            String   @id @default(cuid())
-  schoolId      String   @unique // human/operational id used across the app
-  name          String
-  region        Region   @relation(fields: [regionId], references: [id])
-  regionId      String
-  district      District @relation(fields: [districtId], references: [id])
-  districtId    String
-  subCounty     SubCounty? @relation(fields: [subCountyId], references: [id])
-  subCountyId   String?
-  parish        Parish?  @relation(fields: [parishId], references: [id])
-  parishId      String?
+  id                       String     @id @default(cuid())
+  schoolId                 String     @unique // human/operational id used across the app
+  name                     String
+  region                   Region     @relation(fields: [regionId], references: [id])
+  regionId                 String
+  district                 District   @relation(fields: [districtId], references: [id])
+  districtId               String
+  subCounty                SubCounty? @relation(fields: [subCountyId], references: [id])
+  subCountyId              String?
+  parish                   Parish?    @relation(fields: [parishId], references: [id])
+  parishId                 String?
+  // Resolved official sub-region / county ids (plain refs — joined in app code).
+  subRegionId              String?
+  countyId                 String?
+  // ORIGINAL uploaded geography text — preserved verbatim for audit + correction,
+  // never overwritten by matching. Match status drives the geography review queue.
+  uploadedRegionText       String?
+  uploadedDistrictText     String?
+  uploadedSubCountyText    String?
+  uploadedParishText       String?
+  geographyMatchStatus     String? // EXACT | ALIAS | FUZZY_HIGH | FUZZY_LOW_REVIEW_REQUIRED | UNMATCHED
+  geographyMatchConfidence Float?
+  geographyMatchWarnings   Json?
 
   shippingAddress     String?
   schoolPhone         String?
@@ -532,26 +635,26 @@ model School {
   enrollment          Int?
   schoolType          SchoolType @default(client)
 
-  accountOwner        StaffProfile? @relation("SchoolAccountOwner", fields: [accountOwnerId], references: [id])
+  accountOwner        StaffProfile?      @relation("SchoolAccountOwner", fields: [accountOwnerId], references: [id])
   accountOwnerId      String?
-  accountOwnerNameRaw String?  // as uploaded, before matching
+  accountOwnerNameRaw String? // as uploaded, before matching
   accountOwnerStatus  AccountOwnerStatus @default(pending)
   duplicateStatus     DuplicateStatus    @default(none)
 
-  cluster        Cluster? @relation(fields: [clusterId], references: [id])
-  clusterId      String?
-  clusterStatus  ClusterStatus @default(unclustered)
+  cluster       Cluster?      @relation(fields: [clusterId], references: [id])
+  clusterId     String?
+  clusterStatus ClusterStatus @default(unclustered)
 
-  currentFySsaStatus  SsaStatus         @default(not_done)
-  planningReadiness   PlanningReadiness @default(locked)
+  currentFySsaStatus SsaStatus         @default(not_done)
+  planningReadiness  PlanningReadiness @default(locked)
 
   // Salesforce-ready (not integrated yet)
-  salesforceAccountId   String?
-  salesforceSyncStatus  SalesforceSyncStatus @default(not_synced)
+  salesforceAccountId    String?
+  salesforceSyncStatus   SalesforceSyncStatus @default(not_synced)
   salesforceLastSyncedAt DateTime?
   salesforceSyncError    String?
 
-  createdByIa   Boolean  @default(false)
+  createdByIa   Boolean      @default(false)
   uploadBatch   UploadBatch? @relation(fields: [uploadBatchId], references: [id])
   uploadBatchId String?
 
@@ -575,40 +678,40 @@ model School {
 }
 
 model UploadBatch {
-  id          String   @id @default(cuid())
-  source      String   @default("manual") // manual | csv | future:salesforce
-  fileName    String?
-  uploadedBy  String   // userId
-  rowCount    Int      @default(0)
-  acceptedCount Int    @default(0)
-  flaggedCount  Int    @default(0)
-  schools     School[]
-  ownerMaps   SchoolAccountOwnerUploadMap[]
-  createdAt   DateTime @default(now())
+  id            String                        @id @default(cuid())
+  source        String                        @default("manual") // manual | csv | future:salesforce
+  fileName      String?
+  uploadedBy    String // userId
+  rowCount      Int                           @default(0)
+  acceptedCount Int                           @default(0)
+  flaggedCount  Int                           @default(0)
+  schools       School[]
+  ownerMaps     SchoolAccountOwnerUploadMap[]
+  createdAt     DateTime                      @default(now())
 }
 
 model SchoolAccountOwnerUploadMap {
-  id            String   @id @default(cuid())
-  uploadBatch   UploadBatch @relation(fields: [uploadBatchId], references: [id])
-  uploadBatchId String
-  schoolIdRaw   String
-  ownerNameRaw  String
+  id             String      @id @default(cuid())
+  uploadBatch    UploadBatch @relation(fields: [uploadBatchId], references: [id])
+  uploadBatchId  String
+  schoolIdRaw    String
+  ownerNameRaw   String
   matchedStaffId String?
-  matched       Boolean  @default(false)
-  createdAt     DateTime @default(now())
+  matched        Boolean     @default(false)
+  createdAt      DateTime    @default(now())
 }
 
 model SchoolDuplicateCandidate {
-  id           String   @id @default(cuid())
-  school       School   @relation("DupSchool", fields: [schoolId], references: [id])
-  schoolId     String
-  candidate    School   @relation("DupCandidate", fields: [candidateId], references: [id])
-  candidateId  String
-  score        Int      // 0-100 similarity
-  reasons      String[] // ["name","phone","district"]
-  resolved     Boolean  @default(false)
-  resolution   String?  // merged | not_duplicate | archived
-  createdAt    DateTime @default(now())
+  id          String   @id @default(cuid())
+  school      School   @relation("DupSchool", fields: [schoolId], references: [id])
+  schoolId    String
+  candidate   School   @relation("DupCandidate", fields: [candidateId], references: [id])
+  candidateId String
+  score       Int // 0-100 similarity
+  reasons     String[] // ["name","phone","district"]
+  resolved    Boolean  @default(false)
+  resolution  String? // merged | not_duplicate | archived
+  createdAt   DateTime @default(now())
 
   @@unique([schoolId, candidateId])
 }
@@ -616,30 +719,30 @@ model SchoolDuplicateCandidate {
 // ─────────────────────── Clusters ───────────────────────
 
 model Cluster {
-  id         String   @id @default(cuid())
-  name       String
-  region     Region   @relation(fields: [regionId], references: [id])
-  regionId   String
-  district   District @relation(fields: [districtId], references: [id])
-  districtId String
-  subCounty  SubCounty? @relation(fields: [subCountyId], references: [id])
-  subCountyId String?    // PRIMARY sub-county (first selected); display + back-compat
-  subCountyName String?  // display fallback
-  clusterType ClusterType @default(mixed)
-  status     ClusterRecordStatus @default(active)
-  overrideReason String? // set when created via sub-county uniqueness override
+  id                 String                    @id @default(cuid())
+  name               String
+  region             Region                    @relation(fields: [regionId], references: [id])
+  regionId           String
+  district           District                  @relation(fields: [districtId], references: [id])
+  districtId         String
+  subCounty          SubCounty?                @relation(fields: [subCountyId], references: [id])
+  subCountyId        String? // PRIMARY sub-county (first selected); display + back-compat
+  subCountyName      String? // display fallback
+  clusterType        ClusterType               @default(mixed)
+  status             ClusterRecordStatus       @default(active)
+  overrideReason     String? // set when created via sub-county uniqueness override
   responsibleStaffId String?
   clusterLeaderName  String?
   clusterLeaderPhone String?
-  schools    School[]
-  assignments SchoolClusterAssignment[]
+  schools            School[]
+  assignments        SchoolClusterAssignment[]
   // A cluster covers ONE OR MORE sub-counties (§4/§5). Eligibility is computed
   // against this set — a school is eligible iff its sub-county is covered.
   coveredSubCounties ClusterSubCounty[]
-  activities Activity[]
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  deletedAt  DateTime?
+  activities         Activity[]
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+  deletedAt          DateTime?
 
   @@index([districtId])
   @@index([subCountyId])
@@ -661,13 +764,13 @@ model ClusterSubCounty {
 }
 
 model SchoolClusterAssignment {
-  id        String   @id @default(cuid())
-  school    School   @relation(fields: [schoolId], references: [id])
-  schoolId  String
-  cluster   Cluster  @relation(fields: [clusterId], references: [id])
-  clusterId String
-  assignedBy String  // userId
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  school     School   @relation(fields: [schoolId], references: [id])
+  schoolId   String
+  cluster    Cluster  @relation(fields: [clusterId], references: [id])
+  clusterId  String
+  assignedBy String // userId
+  createdAt  DateTime @default(now())
 
   @@unique([schoolId, clusterId])
 }
@@ -675,35 +778,35 @@ model SchoolClusterAssignment {
 // ─────────────────────── SSA ───────────────────────
 
 model SsaRecord {
-  id          String   @id @default(cuid())
-  school      School   @relation(fields: [schoolId], references: [id])
-  schoolId    String
-  dateOfSsa   DateTime
-  fy          String
-  quarter     String   // Q1..Q4
+  id            String     @id @default(cuid())
+  school        School     @relation(fields: [schoolId], references: [id])
+  schoolId      String
+  dateOfSsa     DateTime
+  fy            String
+  quarter       String // Q1..Q4
   newEnrollment Int?
   averageScore  Float?
-  scores      SsaScore[]
+  scores        SsaScore[]
 
   // Salesforce-ready verification of the SSA itself
-  salesforceId String?
+  salesforceId       String?
   verificationStatus VerificationStatus @default(pending)
 
   // Collection source + verification provenance (the contract-worthy QA layer).
   // Staff-collected SSA is auto-verified; partner-collected needs staff/IA review.
-  collectorType      SsaCollectorType @default(staff)
-  verificationSource String?          // staff_self_verified | partner_submitted | ia_verified | imported_previous_fy
-  collectedByUserId  String?
+  collectorType        SsaCollectorType @default(staff)
+  verificationSource   String? // staff_self_verified | partner_submitted | ia_verified | imported_previous_fy
+  collectedByUserId    String?
   collectedByPartnerId String?
-  verifiedByUserId   String?
-  verifiedAt         DateTime?
-  qaReviewedByUserId String?
-  qaReviewedAt       DateTime?
+  verifiedByUserId     String?
+  verifiedAt           DateTime?
+  qaReviewedByUserId   String?
+  qaReviewedAt         DateTime?
 
-  uploadedBy  String   // userId (IA)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  deletedAt   DateTime?
+  uploadedBy String // userId (IA)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
 
   @@index([schoolId])
   @@index([fy])
@@ -743,14 +846,14 @@ model SchoolEnrollmentHistory {
 // ─────────────────────── Activities ───────────────────────
 
 model Activity {
-  id            String       @id @default(cuid())
-  activityType  ActivityType
-  school        School?      @relation(fields: [schoolId], references: [id])
-  schoolId      String?
-  cluster       Cluster?     @relation(fields: [clusterId], references: [id])
-  clusterId     String?
-  project       Project?     @relation(fields: [projectId], references: [id])
-  projectId     String?
+  id           String       @id @default(cuid())
+  activityType ActivityType
+  school       School?      @relation(fields: [schoolId], references: [id])
+  schoolId     String?
+  cluster      Cluster?     @relation(fields: [clusterId], references: [id])
+  clusterId    String?
+  project      Project?     @relation(fields: [projectId], references: [id])
+  projectId    String?
 
   fy            String
   quarter       String
@@ -760,19 +863,19 @@ model Activity {
   plannedMonth  Int?
   plannedWeek   Int?
 
-  responsibleStaff   StaffProfile? @relation("ActivityResponsible", fields: [responsibleStaffId], references: [id])
+  responsibleStaff   StaffProfile?       @relation("ActivityResponsible", fields: [responsibleStaffId], references: [id])
   responsibleStaffId String?
-  monitoredByStaff   StaffProfile? @relation("ActivityMonitor", fields: [monitoredByStaffId], references: [id])
+  monitoredByStaff   StaffProfile?       @relation("ActivityMonitor", fields: [monitoredByStaffId], references: [id])
   monitoredByStaffId String?
-  assignedPartner    Partner?      @relation(fields: [assignedPartnerId], references: [id])
+  assignedPartner    Partner?            @relation(fields: [assignedPartnerId], references: [id])
   assignedPartnerId  String?
-  deliveryType       DeliveryType  @default(staff)
+  deliveryType       DeliveryType        @default(staff)
   // Explicit cluster slot (SIT / 1st / 2nd / 3rd) when this is cluster work.
   clusterSlot        ClusterMeetingSlot?
 
   purposeIntervention SsaIntervention?
-  status        ActivityStatus  @default(not_planned)
-  evidenceStatus EvidenceStatus @default(none)
+  status              ActivityStatus   @default(not_planned)
+  evidenceStatus      EvidenceStatus   @default(none)
 
   // Salesforce-ready
   salesforceActivityId   String?
@@ -784,17 +887,17 @@ model Activity {
   paymentStatus        PaymentStatus      @default(none)
 
   // Reschedule trail (plan-as-list): count drives the slip limit.
-  rescheduleCount     Int      @default(0)
-  lastReason          String?
+  rescheduleCount Int     @default(0)
+  lastReason      String?
 
   // Training/cluster-meeting completion detail
-  teachersAttended    Int?
-  leadersAttended     Int?
-  otherParticipants   Int?
-  nextMeetingDate     DateTime?
+  teachersAttended  Int?
+  leadersAttended   Int?
+  otherParticipants Int?
+  nextMeetingDate   DateTime?
 
-  evidence      EvidenceRecord[]
-  verification  ActivityCompletionVerification?
+  evidence       EvidenceRecord[]
+  verification   ActivityCompletionVerification?
   paymentRequest PaymentRequest?
 
   createdAt DateTime  @default(now())
@@ -816,24 +919,24 @@ model Activity {
 // ─────────────────────── Evidence ───────────────────────
 
 model EvidenceRecord {
-  id           String       @id @default(cuid())
-  activity     Activity     @relation(fields: [activityId], references: [id])
+  id           String         @id @default(cuid())
+  activity     Activity       @relation(fields: [activityId], references: [id])
   activityId   String
   kind         EvidenceKind
   uri          String
-  originalName String?      // the uploader's filename (for download + display)
-  mimeType     String?      // for correct Content-Type on preview/download
+  originalName String? // the uploader's filename (for download + display)
+  mimeType     String? // for correct Content-Type on preview/download
   notes        String?
-  uploadedBy   String       // userId (staff or partner)
+  uploadedBy   String // userId (staff or partner)
   status       EvidenceStatus @default(uploaded)
   reviewedBy   String?
   reviewedAt   DateTime?
   reviewNote   String?
   // Malware-scan seam (spec §11). scanStatus: pending | clean | infected |
   // skipped (no scanner configured). A quarantined file is never downloadable.
-  scanStatus   String       @default("pending")
-  quarantined  Boolean      @default(false)
-  createdAt    DateTime     @default(now())
+  scanStatus   String         @default("pending")
+  quarantined  Boolean        @default(false)
+  createdAt    DateTime       @default(now())
 
   @@index([activityId])
   @@index([quarantined])
@@ -842,65 +945,65 @@ model EvidenceRecord {
 // ─────────────── Salesforce verification (manual) ───────────────
 
 model ActivityCompletionVerification {
-  id            String   @id @default(cuid())
-  activity      Activity @relation(fields: [activityId], references: [id])
-  activityId    String   @unique
-  salesforceId  String   // SV- or TS-
-  enteredBy     String   // responsible staff userId
-  enteredAt     DateTime @default(now())
-  status        VerificationStatus @default(pending)
-  iaActorId     String?
-  iaActionAt    DateTime?
-  iaNote        String?
+  id           String             @id @default(cuid())
+  activity     Activity           @relation(fields: [activityId], references: [id])
+  activityId   String             @unique
+  salesforceId String // SV- or TS-
+  enteredBy    String // responsible staff userId
+  enteredAt    DateTime           @default(now())
+  status       VerificationStatus @default(pending)
+  iaActorId    String?
+  iaActionAt   DateTime?
+  iaNote       String?
 }
 
 // ─────────────────────── Payments ───────────────────────
 
 model PaymentRequest {
-  id          String      @id @default(cuid())
-  activity    Activity    @relation(fields: [activityId], references: [id])
-  activityId  String      @unique
-  path        PaymentPath
-  amount      Float?
-  status      PaymentStatus @default(pending_ia)
+  id                String               @id @default(cuid())
+  activity          Activity             @relation(fields: [activityId], references: [id])
+  activityId        String               @unique
+  path              PaymentPath
+  amount            Float?
+  status            PaymentStatus        @default(pending_ia)
   netsuiteExpenseId String?
-  actions     PaymentActionLog[]
-  disbursement PaymentDisbursement?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  actions           PaymentActionLog[]
+  disbursement      PaymentDisbursement?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
 }
 
 model PaymentActionLog {
-  id              String   @id @default(cuid())
-  paymentRequest  PaymentRequest @relation(fields: [paymentRequestId], references: [id])
+  id               String         @id @default(cuid())
+  paymentRequest   PaymentRequest @relation(fields: [paymentRequestId], references: [id])
   paymentRequestId String
-  action          String   // ia_confirmed | pl_approved | accountant_cleared | paid | netsuite_recorded
-  actorId         String
-  note            String?
-  createdAt       DateTime @default(now())
+  action           String // ia_confirmed | pl_approved | accountant_cleared | paid | netsuite_recorded
+  actorId          String
+  note             String?
+  createdAt        DateTime       @default(now())
 }
 
 model PaymentDisbursement {
-  id              String   @id @default(cuid())
-  paymentRequest  PaymentRequest @relation(fields: [paymentRequestId], references: [id])
-  paymentRequestId String  @unique
-  amount          Float
-  clearedBy       String   // accountant userId
-  paidAt          DateTime @default(now())
-  reference       String?
+  id               String         @id @default(cuid())
+  paymentRequest   PaymentRequest @relation(fields: [paymentRequestId], references: [id])
+  paymentRequestId String         @unique
+  amount           Float
+  clearedBy        String // accountant userId
+  paidAt           DateTime       @default(now())
+  reference        String?
 }
 
 // ─────────────────────── Annual plan & budget ───────────────────────
 
 model AnnualPlan {
-  id         String   @id @default(cuid())
-  fy         String
-  ownerStaffId String?
-  status     String   @default("draft") // draft | submitted | approved | returned
-  activities AnnualPlanActivity[]
+  id             String               @id @default(cuid())
+  fy             String
+  ownerStaffId   String?
+  status         String               @default("draft") // draft | submitted | approved | returned
+  activities     AnnualPlanActivity[]
   budgetVersions BudgetVersion[]
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
 
   @@unique([fy, ownerStaffId])
 }
@@ -909,21 +1012,21 @@ model AnnualPlan {
 // from AnnualPlan (which is FY-level). Activities are plan-scoped drafts; the
 // plan carries the approval-workflow status.
 model MonthlyPlan {
-  id             String   @id @default(cuid())
-  monthIso       String   // "2026-05"
+  id             String                @id @default(cuid())
+  monthIso       String // "2026-05"
   ownerStaffId   String
   ownerName      String?
-  countryId      String   @default("Uganda")
+  countryId      String                @default("Uganda")
   // draft | submitted | approved | returned | active | closed
-  status         String   @default("draft")
+  status         String                @default("draft")
   submittedAt    DateTime?
   approvedAt     DateTime?
   approvedById   String?
   returnedReason String?
-  totalCostCents Int      @default(0)
+  totalCostCents Int                   @default(0)
   activities     MonthlyPlanActivity[]
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
 
   @@unique([monthIso, ownerStaffId])
   @@index([status])
@@ -931,22 +1034,22 @@ model MonthlyPlan {
 }
 
 model MonthlyPlanActivity {
-  id               String   @id @default(cuid())
+  id               String      @id @default(cuid())
   plan             MonthlyPlan @relation(fields: [monthlyPlanId], references: [id], onDelete: Cascade)
   monthlyPlanId    String
   kind             String
   title            String
-  weekOfMonth      Int      @default(1)
+  weekOfMonth      Int         @default(1)
   scheduledDate    String?
   schoolId         String?
   assigneeId       String?
-  estCostCents     Int      @default(0)
-  status           String   @default("Planned")
+  estCostCents     Int         @default(0)
+  status           String      @default("Planned")
   interventionArea String?
   deliveryType     String?
   partnerName      String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
 
   @@index([monthlyPlanId])
 }
@@ -955,22 +1058,22 @@ model MonthlyPlanActivity {
 // Deterministic id "cplan-{schoolId}" so the FE core-store and the backend
 // share ids (no mapping drift).
 model CorePlan {
-  id                 String   @id // "cplan-{schoolId}"
-  schoolId           String   @unique // operational schoolId
+  id                 String             @id // "cplan-{schoolId}"
+  schoolId           String             @unique // operational schoolId
   fy                 String
-  status             String   @default("Active")
-  visitsTarget       Int      @default(4)
-  trainingsTarget    Int      @default(4)
-  visitsCompleted    Int      @default(0)
-  trainingsCompleted Int      @default(0)
+  status             String             @default("Active")
+  visitsTarget       Int                @default(4)
+  trainingsTarget    Int                @default(4)
+  visitsCompleted    Int                @default(0)
+  trainingsCompleted Int                @default(0)
   baselineAverage    Float?
   followUpAverage    Float?
-  interventions      Json?    // [{ area, rank, baselineScore }]
+  interventions      Json? // [{ area, rank, baselineScore }]
   createdById        String?
   createdByName      String?
   slots              CoreActivitySlot[]
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
   @@index([status])
 }
@@ -978,15 +1081,15 @@ model CorePlan {
 // The 8 core slots (4 visit + 4 training). Deterministic id
 // "cslot-{schoolId}-{v|t}{seq}" to match the FE core-store.
 model CoreActivitySlot {
-  id                  String   @id // "cslot-{schoolId}-v1"
-  corePlan            CorePlan @relation(fields: [corePlanId], references: [id], onDelete: Cascade)
+  id                  String    @id // "cslot-{schoolId}-v1"
+  corePlan            CorePlan  @relation(fields: [corePlanId], references: [id], onDelete: Cascade)
   corePlanId          String
   schoolId            String
   intervention        String
-  activityType        String   // "visit" | "training"
+  activityType        String // "visit" | "training"
   sequenceNumber      Int
-  status              String   @default("Planned")
-  owner               String   @default("unassigned") // unassigned|myself|staff|partner
+  status              String    @default("Planned")
+  owner               String    @default("unassigned") // unassigned|myself|staff|partner
   assignedStaffId     String?
   assignedStaffName   String?
   assignedPartnerId   String?
@@ -995,16 +1098,16 @@ model CoreActivitySlot {
   scheduledWeek       Int?
   salesforceId        String?
   completedAt         DateTime?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   @@index([corePlanId])
   @@index([schoolId])
 }
 
 model AnnualPlanActivity {
-  id           String   @id @default(cuid())
-  annualPlan   AnnualPlan @relation(fields: [annualPlanId], references: [id])
+  id           String               @id @default(cuid())
+  annualPlan   AnnualPlan           @relation(fields: [annualPlanId], references: [id])
   annualPlanId String
   activityType ActivityType
   schoolId     String?
@@ -1013,38 +1116,38 @@ model AnnualPlanActivity {
   month        Int?
   week         Int?
   budgetLines  ActivityBudgetLine[]
-  createdAt    DateTime @default(now())
+  createdAt    DateTime             @default(now())
 }
 
 model ActivityBudgetLine {
-  id                  String   @id @default(cuid())
-  annualPlanActivity  AnnualPlanActivity @relation(fields: [annualPlanActivityId], references: [id])
+  id                   String             @id @default(cuid())
+  annualPlanActivity   AnnualPlanActivity @relation(fields: [annualPlanActivityId], references: [id])
   annualPlanActivityId String
-  costSettingKey      String
-  quantity            Float    @default(1)
-  unitCost            Float
-  amount              Float
-  createdAt           DateTime @default(now())
+  costSettingKey       String
+  quantity             Float              @default(1)
+  unitCost             Float
+  amount               Float
+  createdAt            DateTime           @default(now())
 }
 
 model BudgetVersion {
-  id           String   @id @default(cuid())
-  annualPlan   AnnualPlan @relation(fields: [annualPlanId], references: [id])
+  id           String           @id @default(cuid())
+  annualPlan   AnnualPlan       @relation(fields: [annualPlanId], references: [id])
   annualPlanId String
-  version      Int      @default(1)
-  total        Float    @default(0)
+  version      Int              @default(1)
+  total        Float            @default(0)
   approvals    BudgetApproval[]
-  createdAt    DateTime @default(now())
+  createdAt    DateTime         @default(now())
 }
 
 model BudgetApproval {
-  id              String   @id @default(cuid())
+  id              String        @id @default(cuid())
   budgetVersion   BudgetVersion @relation(fields: [budgetVersionId], references: [id])
   budgetVersionId String
   approverId      String
-  decision        String   // approved | returned
+  decision        String // approved | returned
   note            String?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime      @default(now())
 }
 
 model MonthlyFundRequest {
@@ -1064,7 +1167,7 @@ model CostSetting {
   unitCost  Float
   fy        String?
   version   Int      @default(1) // bumped on every rate change (CountryCostRegister versioning)
-  createdBy String?  // CD userId
+  createdBy String? // CD userId
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -1077,9 +1180,9 @@ model CostSettingHistory {
   id              String   @id @default(cuid())
   key             String
   label           String
-  oldUnitCost     Float?   // null on first create
+  oldUnitCost     Float? // null on first create
   newUnitCost     Float
-  version         Int      // the new version after this change
+  version         Int // the new version after this change
   fy              String?
   changedByUserId String
   reason          String?
@@ -1092,29 +1195,29 @@ model CostSettingHistory {
 // ─────────────────────── Special projects ───────────────────────
 
 model Project {
-  id          String          @id @default(cuid())
+  id                 String                     @id @default(cuid())
   // Stable business code (e.g. "SP-EDTECH") — the cross-surface identifier the
   // School Directory / portfolio uses to assign schools. Lets the FE reference a
   // project without knowing its cuid, so assignment writes hit the real backend.
-  code        String?         @unique
-  name        String
-  category    ProjectCategory
-  intervention SsaIntervention?
-  managerStaffId String?
+  code               String?                    @unique
+  name               String
+  category           ProjectCategory
+  intervention       SsaIntervention?
+  managerStaffId     String?
   schoolAssignments  ProjectSchoolAssignment[]
   partnerAssignments ProjectPartnerAssignment[]
-  activities  Activity[]
-  impactSnapshots ProjectImpactSnapshot[]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  deletedAt   DateTime?
+  activities         Activity[]
+  impactSnapshots    ProjectImpactSnapshot[]
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  deletedAt          DateTime?
 }
 
 model ProjectSchoolAssignment {
-  id        String  @id @default(cuid())
-  project   Project @relation(fields: [projectId], references: [id])
+  id        String   @id @default(cuid())
+  project   Project  @relation(fields: [projectId], references: [id])
   projectId String
-  school    School  @relation(fields: [schoolId], references: [id])
+  school    School   @relation(fields: [schoolId], references: [id])
   schoolId  String
   createdAt DateTime @default(now())
 
@@ -1122,10 +1225,10 @@ model ProjectSchoolAssignment {
 }
 
 model ProjectPartnerAssignment {
-  id        String  @id @default(cuid())
-  project   Project @relation(fields: [projectId], references: [id])
+  id        String   @id @default(cuid())
+  project   Project  @relation(fields: [projectId], references: [id])
   projectId String
-  partner   Partner @relation(fields: [partnerId], references: [id])
+  partner   Partner  @relation(fields: [partnerId], references: [id])
   partnerId String
   createdAt DateTime @default(now())
 
@@ -1133,92 +1236,92 @@ model ProjectPartnerAssignment {
 }
 
 model ProjectImpactSnapshot {
-  id        String  @id @default(cuid())
-  project   Project @relation(fields: [projectId], references: [id])
-  projectId String
-  fy        String
+  id          String   @id @default(cuid())
+  project     Project  @relation(fields: [projectId], references: [id])
+  projectId   String
+  fy          String
   metricsJson Json
-  createdAt DateTime @default(now())
+  createdAt   DateTime @default(now())
 }
 
 // ─────────────────────── Partners ───────────────────────
 
 model Partner {
-  id        String   @id @default(cuid())
-  name      String
-  regionName String?
-  trainsOn  String[]
-  notes     String?
+  id                  String                      @id @default(cuid())
+  name                String
+  regionName          String?
+  trainsOn            String[]
+  notes               String?
   // CD onboarding profile (item 17/18): eligibility, coverage, contract.
-  contactPerson      String?
-  email              String?
-  phone              String?
-  coverageDistricts  String[]
-  contractStatus     String?  // active | pending | expired | none
-  onboardedByUserId  String?
-  onboardedAt        DateTime?
+  contactPerson       String?
+  email               String?
+  phone               String?
+  coverageDistricts   String[]
+  contractStatus      String? // active | pending | expired | none
+  onboardedByUserId   String?
+  onboardedAt         DateTime?
   // Certification (item 14): correlation separates certified vs non-certified
   // partner support, driving the staff-vs-certified-partner contribution view.
-  isCertified         Boolean  @default(false)
-  certificationStatus String?  // certified | pending | expired | none
+  isCertified         Boolean                     @default(false)
+  certificationStatus String? // certified | pending | expired | none
   expertiseAreas      String[]
-  activeStatus        Boolean  @default(true)
+  activeStatus        Boolean                     @default(true)
   // Backend login link — a partner field officer authenticates as this user, so
   // their session sees only THIS partner's assigned activities (the round-trip).
-  userId    String?  @unique
-  user      User?    @relation(fields: [userId], references: [id])
-  activities Activity[]
-  projectAssignments ProjectPartnerAssignment[]
+  userId              String?                     @unique
+  user                User?                       @relation(fields: [userId], references: [id])
+  activities          Activity[]
+  projectAssignments  ProjectPartnerAssignment[]
   performanceProfiles PartnerPerformanceProfile[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
+  createdAt           DateTime                    @default(now())
+  updatedAt           DateTime                    @updatedAt
+  deletedAt           DateTime?
 }
 
 // ─────────────────────── Messages & notifications ───────────────────────
 
 model MessageThread {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   subject     String
   contextType String?
   contextId   String?
   messages    Message[]
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
 }
 
 model Message {
-  id          String        @id @default(cuid())
-  thread      MessageThread @relation(fields: [threadId], references: [id])
-  threadId    String
-  sender      User          @relation("MessageSender", fields: [senderId], references: [id])
-  senderId    String
-  recipientId String?       // the user this message is addressed to (inbox scope)
-  body        String
-  category    String?
-  contextType String?
-  contextId   String?
-  targetRoute String?
-  priority    NotificationPriority @default(normal)
-  actionRequired Boolean    @default(false)
-  status      MessageStatus @default(unread)
-  createdAt   DateTime      @default(now())
+  id             String               @id @default(cuid())
+  thread         MessageThread        @relation(fields: [threadId], references: [id])
+  threadId       String
+  sender         User                 @relation("MessageSender", fields: [senderId], references: [id])
+  senderId       String
+  recipientId    String? // the user this message is addressed to (inbox scope)
+  body           String
+  category       String?
+  contextType    String?
+  contextId      String?
+  targetRoute    String?
+  priority       NotificationPriority @default(normal)
+  actionRequired Boolean              @default(false)
+  status         MessageStatus        @default(unread)
+  createdAt      DateTime             @default(now())
 
   @@index([recipientId, status])
 }
 
 model Notification {
-  id            String   @id @default(cuid())
-  recipient     User     @relation(fields: [recipientId], references: [id])
-  recipientId   String
-  title         String
-  body          String?
-  contextType   String?
-  contextId     String?
-  targetRoute   String?
-  actionRequired Boolean @default(false)
-  priority      NotificationPriority @default(normal)
-  status        MessageStatus @default(unread)
-  createdAt     DateTime @default(now())
+  id             String               @id @default(cuid())
+  recipient      User                 @relation(fields: [recipientId], references: [id])
+  recipientId    String
+  title          String
+  body           String?
+  contextType    String?
+  contextId      String?
+  targetRoute    String?
+  actionRequired Boolean              @default(false)
+  priority       NotificationPriority @default(normal)
+  status         MessageStatus        @default(unread)
+  createdAt      DateTime             @default(now())
 
   @@index([recipientId, status])
 }
@@ -1226,28 +1329,28 @@ model Notification {
 // ─────────────────────── Audit ───────────────────────
 
 model AuditLog {
-  id          String   @id @default(cuid())
+  id            String     @id @default(cuid())
   // Monotonic insert order — the chain is verified in seq order (createdAt ties
   // at ms resolution would otherwise be ambiguous).
-  seq         BigInt   @default(autoincrement())
-  action      String   // "school.upload", "ia.confirm", "authz.deny", ...
-  subjectKind String?
-  subjectId   String?
-  actor       User?    @relation("AuditActor", fields: [actorId], references: [id])
-  actorId     String?
-  actorRole   EdifyRole?
-  payload     Json?
+  seq           BigInt     @default(autoincrement())
+  action        String // "school.upload", "ia.confirm", "authz.deny", ...
+  subjectKind   String?
+  subjectId     String?
+  actor         User?      @relation("AuditActor", fields: [actorId], references: [id])
+  actorId       String?
+  actorRole     EdifyRole?
+  payload       Json?
   // Request provenance (captured via AsyncLocalStorage request context).
   ipAddress     String?
   userAgent     String?
   correlationId String?
-  success       Boolean  @default(true)
+  success       Boolean    @default(true)
   reason        String?
   // Tamper-evidence: hash chain. hash = sha256(prevHash + canonical(record));
   // prevHash links to the previous row. A DB trigger blocks UPDATE/DELETE.
-  prevHash    String?
-  hash        String?
-  createdAt   DateTime @default(now())
+  prevHash      String?
+  hash          String?
+  createdAt     DateTime   @default(now())
 
   @@index([subjectKind, subjectId])
   @@index([actorId])
@@ -1294,24 +1397,24 @@ enum TargetUnit {
 }
 
 model TargetSetting {
-  id               String          @id @default(cuid())
-  fy               String
-  targetType       TargetType
-  scopeType        TargetScopeType
-  scopeId          String?
-  targetValue      Float?
-  targetUnit       TargetUnit      @default(percentage)
-  targetPercentage Float?
+  id                  String          @id @default(cuid())
+  fy                  String
+  targetType          TargetType
+  scopeType           TargetScopeType
+  scopeId             String?
+  targetValue         Float?
+  targetUnit          TargetUnit      @default(percentage)
+  targetPercentage    Float?
   // Optional custom cumulative distribution e.g. {"Q1":0.2,"Q2":0.5,"Q3":0.75,"Q4":1}
   quarterDistribution Json?
-  setByUserId      String
-  setByRole        EdifyRole
-  effectiveFrom    DateTime        @default(now())
-  effectiveTo      DateTime?
-  notes            String?
-  isActive         Boolean         @default(true)
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  setByUserId         String
+  setByRole           EdifyRole
+  effectiveFrom       DateTime        @default(now())
+  effectiveTo         DateTime?
+  notes               String?
+  isActive            Boolean         @default(true)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
 
   @@index([fy, targetType])
   @@index([scopeType, scopeId])
@@ -1409,40 +1512,40 @@ enum DebriefStatus {
 }
 
 model DailyDebrief {
-  id                 String        @id @default(cuid())
-  fy                 String
-  date               DateTime      // the field day this debrief covers
-  submittedByUserId  String
-  submittedByRole    EdifyRole
-  staffId            String?       // StaffProfile id (staff debrief)
-  partnerId          String?       // Partner id (partner debrief)
-  debriefType        DebriefType   @default(staff)
-  status             DebriefStatus @default(submitted)
-  summary            String?
-  whatHappened       String?
-  whatWentWell       String?
-  whatDidNotGoWell   String?
-  blockers           String[]      // blocker keys (no_funds, transport_late, …)
-  blockerOther       String?
-  supportNeeded      String?
-  recommendations    String?
-  nextAction         String?
-  linkedSchoolIds    String[]
-  linkedClusterIds   String[]
-  linkedPartnerIds   String[]
-  linkedProjectIds   String[]
-  linkedActivityIds  String[]
-  parentDebriefId    String?       // a merged debrief's staff parent
-  mergedIntoDebriefId String?      // set on a partner debrief once merged
-  reviewedByUserId   String?
-  reviewedAt         DateTime?
-  reviewNote         String?
-  submittedAt        DateTime      @default(now())
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
-  deletedAt          DateTime?
+  id                  String        @id @default(cuid())
+  fy                  String
+  date                DateTime // the field day this debrief covers
+  submittedByUserId   String
+  submittedByRole     EdifyRole
+  staffId             String? // StaffProfile id (staff debrief)
+  partnerId           String? // Partner id (partner debrief)
+  debriefType         DebriefType   @default(staff)
+  status              DebriefStatus @default(submitted)
+  summary             String?
+  whatHappened        String?
+  whatWentWell        String?
+  whatDidNotGoWell    String?
+  blockers            String[] // blocker keys (no_funds, transport_late, …)
+  blockerOther        String?
+  supportNeeded       String?
+  recommendations     String?
+  nextAction          String?
+  linkedSchoolIds     String[]
+  linkedClusterIds    String[]
+  linkedPartnerIds    String[]
+  linkedProjectIds    String[]
+  linkedActivityIds   String[]
+  parentDebriefId     String? // a merged debrief's staff parent
+  mergedIntoDebriefId String? // set on a partner debrief once merged
+  reviewedByUserId    String?
+  reviewedAt          DateTime?
+  reviewNote          String?
+  submittedAt         DateTime      @default(now())
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  deletedAt           DateTime?
 
-  recipients         DailyDebriefRecipient[]
+  recipients DailyDebriefRecipient[]
 
   @@index([fy, date])
   @@index([submittedByUserId])
@@ -1485,34 +1588,34 @@ enum FundRequestStatus {
 }
 
 model FundRequest {
-  id                String            @id @default(cuid())
-  fy                String
-  period            FundRequestPeriod
-  periodKey         String            // e.g. "2026" | "2026-Q3" | "2026-M2"
-  scope             String            // own | team | country (the submitter's lens)
-  submittedByUserId String
-  submittedByRole   EdifyRole
-  totalAmount       Float
-  activityCount     Int
-  status            FundRequestStatus @default(submitted)
-  reviewedByUserId  String?
-  reviewedAt        DateTime?
-  reviewNote        String?
+  id                        String            @id @default(cuid())
+  fy                        String
+  period                    FundRequestPeriod
+  periodKey                 String // e.g. "2026" | "2026-Q3" | "2026-M2"
+  scope                     String // own | team | country (the submitter's lens)
+  submittedByUserId         String
+  submittedByRole           EdifyRole
+  totalAmount               Float
+  activityCount             Int
+  status                    FundRequestStatus @default(submitted)
+  reviewedByUserId          String?
+  reviewedAt                DateTime?
+  reviewNote                String?
   // Disbursement (accountant clears an APPROVED request → status disbursed).
-  disbursedAmount   Float?
-  disbursedAt       DateTime?
-  disbursedByUserId String?
-  disburseMethod    String? // MobileMoney | BankTransfer | Cash | Cheque
-  disburseReference String?
+  disbursedAmount           Float?
+  disbursedAt               DateTime?
+  disbursedByUserId         String?
+  disburseMethod            String? // MobileMoney | BankTransfer | Cash | Cheque
+  disburseReference         String?
   // Accountability (owner accounts for spend after disbursement).
-  accountedAmount       Float?
-  returnedAmount        Float?
-  accountabilityStatus  String? // none | submitted | approved | returned
-  accountabilityNetsuiteId String?
+  accountedAmount           Float?
+  returnedAmount            Float?
+  accountabilityStatus      String? // none | submitted | approved | returned
+  accountabilityNetsuiteId  String?
   accountabilitySubmittedAt DateTime?
   accountabilityReviewedAt  DateTime?
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
+  createdAt                 DateTime          @default(now())
+  updatedAt                 DateTime          @updatedAt
 
   @@index([status])
   @@index([fy, period])
@@ -1526,11 +1629,11 @@ model FundRequest {
 // context adjustment, and a human-review status + audit trail.
 
 enum DecisionType {
-  recruitment          // School Recruitment Decision Board
-  staff_addition       // Staff Addition Decision Board
-  partner              // Partner Decision Board (MOU renew/condition/terminate)
-  staff_hr             // Staff Performance & HR Decision Board
-  regional_investment  // Regional / District Investment Decision Board
+  recruitment // School Recruitment Decision Board
+  staff_addition // Staff Addition Decision Board
+  partner // Partner Decision Board (MOU renew/condition/terminate)
+  staff_hr // Staff Performance & HR Decision Board
+  regional_investment // Regional / District Investment Decision Board
 }
 
 enum DecisionScopeType {
@@ -1573,39 +1676,39 @@ enum DecisionStatus {
 // A single generated leadership recommendation. Regenerated by the engine on
 // recompute; human-review fields + notes persist the leadership decision layer.
 model LeadershipDecisionInsight {
-  id              String   @id @default(cuid())
-  fy              String
-  quarter         String?  // Q1..Q4 or null for full-year
-  decisionType    DecisionType
-  scopeType       DecisionScopeType
-  scopeId         String?  // null for country-wide
-  scopeName       String?  // denormalized label for display (district/partner/staff name)
+  id           String            @id @default(cuid())
+  fy           String
+  quarter      String? // Q1..Q4 or null for full-year
+  decisionType DecisionType
+  scopeType    DecisionScopeType
+  scopeId      String? // null for country-wide
+  scopeName    String? // denormalized label for display (district/partner/staff name)
 
-  recommendation  String   // the headline action, e.g. "Pause recruitment in Lira District"
-  reason          String   // the "because" summary
-  riskLevel       DecisionRiskLevel
-  confidenceLevel DecisionConfidenceLevel
-  confidenceScore Float    // 0..100, from DataConfidenceService
-  evidenceSummary Json?    // denormalized top evidence points for quick render
-  contextAdjustment String? // fairness/context note (e.g. "high rural workload")
+  recommendation       String // the headline action, e.g. "Pause recruitment in Lira District"
+  reason               String // the "because" summary
+  riskLevel            DecisionRiskLevel
+  confidenceLevel      DecisionConfidenceLevel
+  confidenceScore      Float // 0..100, from DataConfidenceService
+  evidenceSummary      Json? // denormalized top evidence points for quick render
+  contextAdjustment    String? // fairness/context note (e.g. "high rural workload")
   financialImplication String?
-  suggestedAction String   // recommended next LEADERSHIP action (not auto-executed)
-  alternatives    Json?    // the decision options leadership may choose from
-  metrics         Json?    // supporting metrics snapshot
-  riskFlags       String[] // short risk tags
+  suggestedAction      String // recommended next LEADERSHIP action (not auto-executed)
+  alternatives         Json? // the decision options leadership may choose from
+  metrics              Json? // supporting metrics snapshot
+  riskFlags            String[] // short risk tags
 
-  status          DecisionStatus @default(new)
+  status           DecisionStatus @default(new)
   reviewedByUserId String?
   reviewedByRole   EdifyRole?
-  reviewedAt      DateTime?
-  reviewNote      String?
+  reviewedAt       DateTime?
+  reviewNote       String?
 
-  generatedAt     DateTime @default(now())
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  generatedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  evidencePoints  DecisionEvidencePoint[]
-  notes           DecisionNote[]
+  evidencePoints DecisionEvidencePoint[]
+  notes          DecisionNote[]
 
   @@index([fy, decisionType])
   @@index([scopeType, scopeId])
@@ -1616,32 +1719,32 @@ model LeadershipDecisionInsight {
 
 // One quantified evidence point behind an insight ("38% of schools missing SSA").
 model DecisionEvidencePoint {
-  id          String   @id @default(cuid())
-  insight     LeadershipDecisionInsight @relation(fields: [insightId], references: [id], onDelete: Cascade)
-  insightId   String
-  metricName  String
-  metricValue String   // string for flexibility ("42%", "18 schools", "0.6 pts")
+  id              String                    @id @default(cuid())
+  insight         LeadershipDecisionInsight @relation(fields: [insightId], references: [id], onDelete: Cascade)
+  insightId       String
+  metricName      String
+  metricValue     String // string for flexibility ("42%", "18 schools", "0.6 pts")
   comparisonValue String?
-  sourceType  String   // ssa | targets | workload | partner | system_health | correlation | budget
-  sourceId    String?
-  explanation String?
-  weight      String   @default("supporting") // primary | supporting | context
-  tone        String?  // red | amber | green
-  createdAt   DateTime @default(now())
+  sourceType      String // ssa | targets | workload | partner | system_health | correlation | budget
+  sourceId        String?
+  explanation     String?
+  weight          String                    @default("supporting") // primary | supporting | context
+  tone            String? // red | amber | green
+  createdAt       DateTime                  @default(now())
 
   @@index([insightId])
 }
 
 // Human review note / leadership decision-trail entry on an insight.
 model DecisionNote {
-  id          String   @id @default(cuid())
-  insight     LeadershipDecisionInsight @relation(fields: [insightId], references: [id], onDelete: Cascade)
-  insightId   String
+  id           String                    @id @default(cuid())
+  insight      LeadershipDecisionInsight @relation(fields: [insightId], references: [id], onDelete: Cascade)
+  insightId    String
   authorUserId String
-  authorRole  EdifyRole
-  note        String
-  kind        String   @default("note") // note | follow_up | condition | decision
-  createdAt   DateTime @default(now())
+  authorRole   EdifyRole
+  note         String
+  kind         String                    @default("note") // note | follow_up | condition | decision
+  createdAt    DateTime                  @default(now())
 
   @@index([insightId])
 }
@@ -1650,11 +1753,11 @@ model DecisionNote {
 // distanceBurden are NULLABLE — null means "insufficient data" (no rural/urban
 // classification / no coordinates yet) so the engine never fakes context.
 model StaffContextProfile {
-  id          String   @id @default(cuid())
-  staff       StaffProfile @relation(fields: [staffId], references: [id], onDelete: Cascade)
-  staffId     String
-  fy          String
-  quarter     String   @default("FY") // Q1..Q4 or "FY"
+  id      String       @id @default(cuid())
+  staff   StaffProfile @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  staffId String
+  fy      String
+  quarter String       @default("FY") // Q1..Q4 or "FY"
 
   schoolLoad            Int @default(0)
   clientSchoolLoad      Int @default(0)
@@ -1673,7 +1776,7 @@ model StaffContextProfile {
   contextDifficultyScore Float  @default(0) // composite 0..100
   dataConfidence         Float  @default(0)
 
-  computedAt  DateTime @default(now())
+  computedAt DateTime @default(now())
 
   @@unique([staffId, fy, quarter])
   @@index([fy])
@@ -1683,27 +1786,27 @@ model StaffContextProfile {
 // interventions. interventionImpactScore is NULLABLE — null when there are too
 // few prev→current SSA pairs to judge impact (insufficient data).
 model PartnerPerformanceProfile {
-  id          String   @id @default(cuid())
-  partner     Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  partnerId   String
-  fy          String
-  quarter     String   @default("FY")
+  id        String  @id @default(cuid())
+  partner   Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  partnerId String
+  fy        String
+  quarter   String  @default("FY")
 
-  assignedActivities     Int @default(0)
-  completedActivities    Int @default(0)
-  targetAchievementRate  Float @default(0) // 0..100
-  evidenceAcceptanceRate Float @default(0)
-  iaConfirmationRate     Float @default(0)
-  returnedEvidenceCount  Int @default(0)
-  rescheduleRate         Float @default(0)
-  overdueRate            Float @default(0)
-  capacityUtilization    Float @default(0)
+  assignedActivities      Int      @default(0)
+  completedActivities     Int      @default(0)
+  targetAchievementRate   Float    @default(0) // 0..100
+  evidenceAcceptanceRate  Float    @default(0)
+  iaConfirmationRate      Float    @default(0)
+  returnedEvidenceCount   Int      @default(0)
+  rescheduleRate          Float    @default(0)
+  overdueRate             Float    @default(0)
+  capacityUtilization     Float    @default(0)
   interventionImpactScore Float? // null = insufficient SSA pairs to judge
-  assignedInterventions  String[]
-  recommendationStatus   String? // engine hint (renew | renew_with_conditions | improve | reduce | pause | terminate_review)
-  dataConfidence         Float @default(0)
+  assignedInterventions   String[]
+  recommendationStatus    String? // engine hint (renew | renew_with_conditions | improve | reduce | pause | terminate_review)
+  dataConfidence          Float    @default(0)
 
-  computedAt  DateTime @default(now())
+  computedAt DateTime @default(now())
 
   @@unique([partnerId, fy, quarter])
   @@index([fy])
@@ -1712,26 +1815,26 @@ model PartnerPerformanceProfile {
 // Per-scope (region/district/...) recruitment readiness inputs. scopeId is
 // non-null with "" = the whole country, so the unique upsert key is stable.
 model RecruitmentReadinessProfile {
-  id          String   @id @default(cuid())
-  scopeType   DecisionScopeType
-  scopeId     String   @default("") // "" = country-wide
-  scopeName   String?
-  fy          String
-  quarter     String   @default("FY")
+  id        String            @id @default(cuid())
+  scopeType DecisionScopeType
+  scopeId   String            @default("") // "" = country-wide
+  scopeName String?
+  fy        String
+  quarter   String            @default("FY")
 
-  ssaCompletionRate     Float @default(0)
-  targetAchievementRate Float @default(0)
-  staffCapacityScore    Float @default(0)
-  partnerCapacityScore  Float @default(0)
-  dataQualityScore      Float @default(0)
-  impactScore           Float? // null = no prev-FY comparison available
-  schoolsTotal          Int @default(0)
-  schoolsMissingSsa     Int @default(0)
-  schoolsUnclustered    Int @default(0)
+  ssaCompletionRate         Float   @default(0)
+  targetAchievementRate     Float   @default(0)
+  staffCapacityScore        Float   @default(0)
+  partnerCapacityScore      Float   @default(0)
+  dataQualityScore          Float   @default(0)
+  impactScore               Float? // null = no prev-FY comparison available
+  schoolsTotal              Int     @default(0)
+  schoolsMissingSsa         Int     @default(0)
+  schoolsUnclustered        Int     @default(0)
   recruitmentRecommendation String?
-  dataConfidence        Float @default(0)
+  dataConfidence            Float   @default(0)
 
-  computedAt  DateTime @default(now())
+  computedAt DateTime @default(now())
 
   @@unique([scopeType, scopeId, fy, quarter])
   @@index([fy])
@@ -1750,40 +1853,40 @@ enum ImpactYield {
 }
 
 model BudgetIntelligenceInsight {
-  id              String   @id @default(cuid())
-  fy              String
-  periodType      String   // month | quarter | fy | week
-  period          String   // e.g. "2026-03" | "Q3" | "FY"
-  insightType     String   // monthly | partner | activity | regional | accountability | reallocation
-  scopeType       DecisionScopeType
-  scopeId         String?
-  scopeName       String?
+  id          String            @id @default(cuid())
+  fy          String
+  periodType  String // month | quarter | fy | week
+  period      String // e.g. "2026-03" | "Q3" | "FY"
+  insightType String // monthly | partner | activity | regional | accountability | reallocation
+  scopeType   DecisionScopeType
+  scopeId     String?
+  scopeName   String?
 
-  recommendation  String
-  reason          String
-  riskLevel       DecisionRiskLevel
-  impactYield     ImpactYield
-  confidenceLevel DecisionConfidenceLevel
-  confidenceScore Float
-  amountAffected  Float?   // UGX exposed to this decision
-  evidenceSummary Json?
+  recommendation       String
+  reason               String
+  riskLevel            DecisionRiskLevel
+  impactYield          ImpactYield
+  confidenceLevel      DecisionConfidenceLevel
+  confidenceScore      Float
+  amountAffected       Float? // UGX exposed to this decision
+  evidenceSummary      Json?
   financialImplication String?
-  suggestedAction String
-  alternatives    Json?
-  metrics         Json?
-  riskFlags       String[]
+  suggestedAction      String
+  alternatives         Json?
+  metrics              Json?
+  riskFlags            String[]
 
-  status          DecisionStatus @default(new)
+  status           DecisionStatus @default(new)
   reviewedByUserId String?
   reviewedByRole   EdifyRole?
-  reviewedAt      DateTime?
-  reviewNote      String?
+  reviewedAt       DateTime?
+  reviewNote       String?
 
-  generatedAt     DateTime @default(now())
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  generatedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  notes           FinanceDecisionNote[]
+  notes FinanceDecisionNote[]
 
   @@index([fy, insightType])
   @@index([scopeType, scopeId])
@@ -1792,14 +1895,14 @@ model BudgetIntelligenceInsight {
 }
 
 model FinanceDecisionNote {
-  id        String   @id @default(cuid())
-  insight   BudgetIntelligenceInsight @relation(fields: [insightId], references: [id], onDelete: Cascade)
-  insightId String
+  id           String                    @id @default(cuid())
+  insight      BudgetIntelligenceInsight @relation(fields: [insightId], references: [id], onDelete: Cascade)
+  insightId    String
   authorUserId String
   authorRole   EdifyRole
-  note      String
-  kind      String   @default("note") // note | follow_up | decision
-  createdAt DateTime @default(now())
+  note         String
+  kind         String                    @default("note") // note | follow_up | decision
+  createdAt    DateTime                  @default(now())
 
   @@index([insightId])
 }
@@ -1815,23 +1918,23 @@ enum CdFlagStatus {
 }
 
 model CdFlag {
-  id               String   @id @default(cuid())
-  raisedByUserId   String   // the CD
-  raisedByName     String?
-  assignedToUserId String   // the Program Lead
-  category         String   // ssa | target | partner | staff | cluster | fund | evidence | data_quality | core_package
-  scopeType        String?  // region | district | cluster | school | staff | partner
-  scopeId          String?
-  scopeName        String?
-  note             String
+  id                String       @id @default(cuid())
+  raisedByUserId    String // the CD
+  raisedByName      String?
+  assignedToUserId  String // the Program Lead
+  category          String // ssa | target | partner | staff | cluster | fund | evidence | data_quality | core_package
+  scopeType         String? // region | district | cluster | school | staff | partner
+  scopeId           String?
+  scopeName         String?
+  note              String
   recommendedAction String?
-  priority         String   @default("normal") // low | normal | high | urgent
-  dueDate          String?
-  status           CdFlagStatus @default(open)
-  resolutionNote   String?
-  resolvedAt       DateTime?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  priority          String       @default("normal") // low | normal | high | urgent
+  dueDate           String?
+  status            CdFlagStatus @default(open)
+  resolutionNote    String?
+  resolvedAt        DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 
   @@index([assignedToUserId, status])
   @@index([raisedByUserId])
