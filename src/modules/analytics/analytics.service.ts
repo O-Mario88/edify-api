@@ -365,6 +365,43 @@ export class AnalyticsService {
     };
   }
 
+  // Lazy district detail for the map drawer — the clusters in a district, each
+  // with its OWN SSA average and the single intervention IT is weakest in (not
+  // all clusters struggle with the same thing). Role-scoped to the caller.
+  async geoMapDistrictDetail(user: AuthUser, districtId: string) {
+    const scope = await this.scope.resolveUserScope(user);
+    const where: Prisma.SchoolWhereInput = { ...this.schoolScope(scope), districtId };
+    const schools = await this.prisma.school.findMany({
+      where: { ...where, clusterId: { not: null } },
+      select: {
+        clusterId: true, cluster: { select: { name: true } },
+        ssaRecords: { where: { deletedAt: null, fy: getOperationalFY() }, orderBy: { dateOfSsa: 'desc' }, take: 1, select: { averageScore: true, scores: { select: { intervention: true, score: true } } } },
+      },
+    });
+    const intvLabel = (k: string) => INTERVENTION_META.find((m) => m.key === k)?.label ?? k;
+    type C = { id: string; name: string; schools: number; ssaSum: number; ssaN: number; intv: Map<string, { sum: number; n: number }> };
+    const map = new Map<string, C>();
+    for (const s of schools) {
+      if (!s.clusterId) continue;
+      const cur = map.get(s.clusterId) ?? { id: s.clusterId, name: s.cluster?.name ?? 'Cluster', schools: 0, ssaSum: 0, ssaN: 0, intv: new Map() };
+      cur.schools++;
+      const rec = s.ssaRecords[0];
+      if (rec?.averageScore != null) { cur.ssaSum += rec.averageScore; cur.ssaN++; }
+      for (const sc of rec?.scores ?? []) {
+        const e = cur.intv.get(sc.intervention) ?? { sum: 0, n: 0 };
+        e.sum += sc.score; e.n++; cur.intv.set(sc.intervention, e);
+      }
+      map.set(s.clusterId, cur);
+    }
+    const clusters = [...map.values()].map((c) => {
+      const weakest = [...c.intv.entries()]
+        .map(([k, v]) => ({ key: k, label: intvLabel(k), avg: Math.round((v.sum / v.n) * 10) / 10 }))
+        .sort((a, b) => a.avg - b.avg || a.key.localeCompare(b.key))[0] ?? null;
+      return { id: c.id, name: c.name, schools: c.schools, avgSsa: c.ssaN ? Math.round((c.ssaSum / c.ssaN) * 10) / 10 : null, weakest };
+    }).sort((a, b) => (a.avgSsa ?? 99) - (b.avgSsa ?? 99));
+    return { districtId, clusters };
+  }
+
   // Client-school coverage — real counts of client schools, how many have an
   // account owner, and which are below the SSA support threshold (avg < 5) and so
   // most need coverage/support. Replaces the fabricated coverage mock.

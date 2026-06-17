@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AnalyticsService } from './analytics.service';
 import { ContributionService } from './contribution.service';
@@ -45,6 +45,8 @@ export class AnalyticsController {
   // Geo-analytics map — per-district + sub-region leadership metrics keyed by
   // official COD-AB pcode (joins boundary geometry on the frontend). Role-scoped.
   @Get('geo-map') geoMap(@Query() g: GeoFilterDto, @CurrentUser() u: AuthUser) { return this.analytics.geoMapDistricts(u, g); }
+  // Lazy district detail (clusters + each cluster's SSA avg + weakest intervention).
+  @Get('geo-map/district/:districtId') geoMapDistrict(@Param('districtId') id: string, @CurrentUser() u: AuthUser) { return this.analytics.geoMapDistrictDetail(u, id); }
   @Get('school-directory') directory(@Query() g: GeoFilterDto, @CurrentUser() u: AuthUser) { return this.analytics.schoolDirectorySummary(u, g); }
   @Get('ssa-performance') ssa(@Query() g: GeoFilterDto, @CurrentUser() u: AuthUser) { return this.analytics.ssaPerformance(u, g); }
 
