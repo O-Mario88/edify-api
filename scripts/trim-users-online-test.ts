@@ -1,10 +1,11 @@
 /**
  * Online Testing — trim the user roster to a focused test set.
  *
- * Keeps exactly: 1 CCEO, 4 PL, 1 CD, 1 RVP, 1 IA, 1 Accountant, 1 Admin (10).
- * Removes everyone else. To keep role-scoping coherent it first reassigns ALL
- * schools to the kept CCEO and wires the 4 PLs to supervise that CCEO, then
- * deletes the other users.
+ * Keeps exactly: 1 CCEO, 4 PL, 1 CD, 1 RVP, 1 IA, 1 Accountant, 1 HR,
+ * 1 ProjectCoordinator, 1 Partner officer, 1 Admin (13) — one of EVERY role so
+ * every workflow can be tested online. Removes everyone else. To keep
+ * role-scoping coherent it first reassigns ALL schools to the kept CCEO and
+ * wires the 4 PLs to supervise that CCEO, then deletes the other users.
  *
  * Tamper-evidence caveat: the append-only AuditLog (audit_no_update/no_delete
  * triggers + actorId FK) blocks deleting any user that has audit history. Those
@@ -26,6 +27,11 @@ const KEEP = {
   RegionalVicePresident: ['rvp@edify.org'],
   ImpactAssessment: ['ia@edify.org'],
   ProgramAccountant: ['accountant@edify.org'],
+  // Keep one of every remaining role so HR / Project / Partner workflows are all
+  // testable online (previously trimmed → those three roles couldn't log in).
+  HumanResources: ['hr@edify.org'],
+  ProjectCoordinator: ['coordinator@edify.org'],
+  PartnerFieldOfficer: ['partner@edify.org'],
   Admin: ['admin@edify.org'],
 };
 const KEEP_EMAILS = Object.values(KEEP).flat();

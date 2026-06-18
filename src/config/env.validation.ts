@@ -45,6 +45,13 @@ export class EnvVars {
   @IsOptional()
   @IsString()
   REDIS_URL?: string;
+
+  // Where uploaded evidence files are written. In production this MUST be an
+  // absolute path on a persistent volume (or object-storage mount) — the dev
+  // default is a relative, ephemeral dir that loses files on redeploy.
+  @IsOptional()
+  @IsString()
+  EVIDENCE_STORAGE_DIR?: string;
 }
 
 const toBool = (v: unknown, fallback = false) =>
@@ -77,6 +84,11 @@ export function validateEnv(config: Record<string, unknown>) {
     }
     if (parsed.AUTHZ_MODE !== 'enforce') {
       issues.push('AUTHZ_MODE must be "enforce" in production (object-level authorization cannot run in shadow).');
+    }
+    // Evidence storage must be a persistent, absolute path in production —
+    // otherwise uploaded evidence is lost on every redeploy and download 404s.
+    if (!parsed.EVIDENCE_STORAGE_DIR || !parsed.EVIDENCE_STORAGE_DIR.startsWith('/')) {
+      issues.push('EVIDENCE_STORAGE_DIR must be set to an absolute, persistent path (a mounted volume) in production — relative/ephemeral storage loses evidence on redeploy.');
     }
     if (issues.length) throw new Error(`Production environment is not safe:\n${issues.join('\n')}`);
   }
