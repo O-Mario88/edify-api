@@ -276,7 +276,9 @@ export class BudgetService {
     const fy = opts.fy || getOperationalFY();
     const rates = await this.rateCard();
     const q = opts.quarter?.toUpperCase();
-    const QMONTHS: Record<string, number[]> = { Q1: [7, 8, 9], Q2: [10, 11, 12], Q3: [1, 2, 3], Q4: [4, 5, 6] };
+    // Edify FY quarters (1-indexed months): Q1 Oct–Dec, Q2 Jan–Mar, Q3 Apr–Jun,
+    // Q4 Jul–Sep — must match common/fy/fy.util.ts (was shifted one quarter).
+    const QMONTHS: Record<string, number[]> = { Q1: [10, 11, 12], Q2: [1, 2, 3], Q3: [4, 5, 6], Q4: [7, 8, 9] };
 
     const activities = await this.prisma.activity.findMany({
       where: { ...this.activityWhere(scope), fy },
@@ -428,8 +430,9 @@ export class BudgetService {
   }
 
   private rollQuarters(byMonth: { month: number; amount: number; count: number }[]) {
-    // Edify FY quarters: Q1 Jul-Sep, Q2 Oct-Dec, Q3 Jan-Mar, Q4 Apr-Jun.
-    const map: Record<string, number[]> = { Q1: [7, 8, 9], Q2: [10, 11, 12], Q3: [1, 2, 3], Q4: [4, 5, 6] };
+    // Edify FY quarters: Q1 Oct–Dec, Q2 Jan–Mar, Q3 Apr–Jun, Q4 Jul–Sep
+    // (1-indexed months). Must match common/fy/fy.util.ts.
+    const map: Record<string, number[]> = { Q1: [10, 11, 12], Q2: [1, 2, 3], Q3: [4, 5, 6], Q4: [7, 8, 9] };
     return Object.entries(map).map(([q, months]) => {
       const rows = byMonth.filter((m) => months.includes(m.month));
       return { quarter: q, amount: rows.reduce((s, r) => s + r.amount, 0), count: rows.reduce((s, r) => s + r.count, 0) };

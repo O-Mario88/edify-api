@@ -10,6 +10,8 @@ export class GeoFilterDto {
   @IsOptional() @IsString() region?: string;
   @IsOptional() @IsString() district?: string;
   @IsOptional() @IsString() cluster?: string;
+  // Optional FY override for FY-scoped endpoints (defaults to the operational FY).
+  @IsOptional() @IsString() fy?: string;
 }
 
 export class SsaPerformanceQueryDto {

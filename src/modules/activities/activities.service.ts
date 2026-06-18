@@ -83,6 +83,16 @@ export class ActivitiesService {
       const s = await this.prisma.school.findUnique({ where: { schoolId: dto.schoolId } });
       if (!s) throw new NotFoundException(`School ${dto.schoolId} not in directory`);
       schoolId = s.id;
+      // SSA planning gate (spec): a school is planning-locked until it has a
+      // COMPLETE current-FY SSA. The FE greys out scheduling for locked schools;
+      // enforce the same rule server-side so a direct API call can't schedule
+      // field work for an un-assessed school. Cluster-only activities (no school)
+      // are exempt — the cluster-assignment gate covers those.
+      if (s.currentFySsaStatus !== 'done') {
+        throw new BadRequestException(
+          `Cannot schedule activity — "${s.name}" has no complete current-FY SSA. Planning is locked until the SSA is recorded.`,
+        );
+      }
     }
     if (!schoolId && !dto.clusterId) throw new BadRequestException('Activity must reference a school or cluster');
 

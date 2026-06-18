@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ScopeService, UserScope } from '../../common/scope/scope.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { geoWhere } from './analytics.service';
+import { getOperationalFY } from '../../common/fy/fy.util';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Contribution engine — "how much am I contributing to school improvement?"
@@ -152,28 +153,36 @@ export class ContributionService {
     const learnersImpacted = reachedSchools.reduce((n, s) => n + (s.enrollment ?? 0), 0);
     const trainingsMissingAttendance = trainings.filter((a) => a.teachersAttended == null && a.leadersAttended == null).length;
 
-    // SSA improvement — latest vs previous averageScore per in-scope school.
+    // SSA improvement — prev-FY vs current-FY, latest complete SSA per school per
+    // FY. This matches the canonical impact definition (analytics.ssaImpact);
+    // previously it compared the latest two SSAs by date regardless of FY, which
+    // gave a different "schools improved" number than the rest of the app.
+    const currentFy = f.fy ?? getOperationalFY();
+    const prevFy = String(Number(currentFy) - 1);
     const ssa = await this.prisma.ssaRecord.findMany({
-      where: { deletedAt: null, ...(countryAll ? {} : { schoolId: { in: inScopeIds.length ? inScopeIds : ['__none__'] } }), ...(f.fy ? {} : {}) },
-      select: { schoolId: true, averageScore: true, dateOfSsa: true, scores: { select: { intervention: true, score: true } } },
-      orderBy: { dateOfSsa: 'asc' },
+      where: { deletedAt: null, fy: { in: [prevFy, currentFy] }, ...(countryAll ? {} : { schoolId: { in: inScopeIds.length ? inScopeIds : ['__none__'] } }) },
+      select: { schoolId: true, fy: true, averageScore: true, dateOfSsa: true, scores: { select: { intervention: true, score: true } } },
+      orderBy: { dateOfSsa: 'desc' },
     });
-    const bySchool = new Map<string, { avg: number | null }[]>();
+    // Latest complete SSA per (school, FY).
+    const prevBy = new Map<string, number>();
+    const currBy = new Map<string, { avg: number; scores: { intervention: string; score: number }[] }>();
     for (const r of ssa) {
-      const arr = bySchool.get(r.schoolId) ?? [];
-      arr.push({ avg: r.averageScore });
-      bySchool.set(r.schoolId, arr);
+      if (r.averageScore == null) continue;
+      if (r.fy === currentFy) { if (!currBy.has(r.schoolId)) currBy.set(r.schoolId, { avg: r.averageScore, scores: r.scores }); }
+      else if (r.fy === prevFy) { if (!prevBy.has(r.schoolId)) prevBy.set(r.schoolId, r.averageScore); }
     }
     let schoolsImproved = 0;
     let noComparison = 0;
-    for (const arr of bySchool.values()) {
-      const scored = arr.filter((x) => x.avg != null);
-      if (scored.length < 2) { noComparison++; continue; }
-      if ((scored[scored.length - 1].avg ?? 0) > (scored[scored.length - 2].avg ?? 0)) schoolsImproved++;
+    const comparedSchoolIds = new Set([...prevBy.keys(), ...currBy.keys()]);
+    for (const sid of comparedSchoolIds) {
+      const p = prevBy.get(sid); const c = currBy.get(sid)?.avg;
+      if (p == null || c == null) { noComparison++; continue; }
+      if (c - p > 0.05) schoolsImproved++;
     }
-    // Best / worst intervention by average score across in-scope SSA.
+    // Best / worst intervention by average score across CURRENT-FY SSA only.
     const interv = new Map<string, { sum: number; n: number }>();
-    for (const r of ssa) for (const sc of r.scores) {
+    for (const r of currBy.values()) for (const sc of r.scores) {
       const cur = interv.get(sc.intervention) ?? { sum: 0, n: 0 };
       cur.sum += sc.score; cur.n++; interv.set(sc.intervention, cur);
     }

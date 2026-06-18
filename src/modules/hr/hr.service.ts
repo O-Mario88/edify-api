@@ -4,6 +4,9 @@ import { DomainEventService } from '../../common/realtime/domain-events.service'
 import { AuthUser } from '../../common/auth/auth-user';
 
 const HR_ROLES = new Set(['HumanResources', 'CountryDirector', 'Admin']);
+// Roles that run the HR workflow (and may therefore see staff email/PII in the
+// roster). RVP/PL get a PII-stripped, scoped roster via STAFF_PERFORMANCE_VIEW.
+const STAFF_MANAGE_ROLES = new Set(['HumanResources', 'CountryDirector', 'Admin']);
 
 /** Inclusive list of ISO yyyy-mm-dd dates between start and end (capped at 60). */
 function expandDates(start: string, end: string): string[] {
@@ -26,10 +29,31 @@ export class HrService {
     private readonly events: DomainEventService,
   ) {}
 
-  /** Staff roster: who's on the team, their role, onboarding state, portfolio size. */
-  async roster() {
+  /** Staff roster: who's on the team, their role, onboarding state, portfolio size.
+   *
+   *  Role-scoped + PII-minimised (the endpoint is guarded by STAFF_PERFORMANCE_VIEW,
+   *  so only HR/CD/RVP/PL/Admin reach here):
+   *   - HR / CD / Admin (STAFF_MANAGE): full org roster INCLUDING email.
+   *   - PL: only their supervised staff, NO email.
+   *   - RVP: full org roster as a region summary, NO email.
+   *  Email is the only PII leaked by the old unscoped handler; managers who run
+   *  the leave/onboarding workflow need it, summary viewers do not. */
+  async roster(user: AuthUser) {
+    const canManage = STAFF_MANAGE_ROLES.has(user.activeRole); // HR / CD / Admin
+    const isPl = user.activeRole === 'CountryProgramLead';
+
+    // PL sees only the staff they supervise (defence-in-depth scope).
+    let where: { deletedAt: null; id?: { in: string[] } } = { deletedAt: null };
+    if (isPl && !canManage) {
+      const links = await this.prisma.staffSupervisorAssignment.findMany({
+        where: { supervisorId: user.staffProfileId ?? '__none__' },
+        select: { superviseeId: true },
+      });
+      where = { deletedAt: null, id: { in: links.map((l) => l.superviseeId) } };
+    }
+
     const staff = await this.prisma.staffProfile.findMany({
-      where: { deletedAt: null },
+      where,
       include: {
         user: { select: { name: true, email: true, activeRole: true, isActive: true } },
         primaryDistrict: { select: { name: true } },
@@ -38,7 +62,10 @@ export class HrService {
       take: 500,
     });
     const rows = staff.map((s) => ({
-      staffProfileId: s.id, name: s.user.name, email: s.user.email, role: s.user.activeRole,
+      staffProfileId: s.id, name: s.user.name,
+      // Email is PII — only managers running the HR workflow receive it.
+      email: canManage ? s.user.email : null,
+      role: s.user.activeRole,
       onboardingState: s.onboardingState, active: s.user.isActive,
       primaryDistrict: s.primaryDistrict?.name ?? null,
       schools: s._count.schoolLinks, supervisees: s._count.superviseeLinks,

@@ -21,7 +21,17 @@ function svc(opts: { leave?: Record<string, unknown> | null; conflicts?: number 
       findMany: vi.fn(async () => []),
     },
     monthlyPlanActivity: { count: vi.fn(async () => opts.conflicts ?? 0) },
-    staffSupervisorAssignment: { findFirst: vi.fn(async () => null) },
+    staffSupervisorAssignment: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => [{ superviseeId: 'staff2' }]) },
+    staffProfile: {
+      findMany: vi.fn(async (_a: { where: Record<string, unknown> }) => [
+        {
+          id: 'staff2', onboardingState: 'active',
+          user: { name: 'Jane Field', email: 'jane@edify.org', activeRole: 'CCEO', isActive: true },
+          primaryDistrict: { name: 'Gulu' },
+          _count: { schoolLinks: 12, superviseeLinks: 0 },
+        },
+      ]),
+    },
   };
   const events = {
     emit: vi.fn(async () => undefined),
@@ -60,6 +70,33 @@ describe('HrService.reviewLeave', () => {
     expect(prisma.monthlyPlanActivity.count).not.toHaveBeenCalled();
     const data = prisma.leave.update.mock.calls[0][0].data;
     expect(data.status).toBe('rejected');
+  });
+});
+
+describe('HrService.roster (PII scoping)', () => {
+  it('HR / CD / Admin receive staff email (they run the HR workflow)', async () => {
+    for (const role of ['HumanResources', 'CountryDirector', 'Admin'] as const) {
+      const { s } = svc();
+      const res = await s.roster(makeUser(role));
+      expect(res.staff[0].email).toBe('jane@edify.org');
+    }
+  });
+
+  it('RVP receives the roster but NO email (PII stripped)', async () => {
+    const { s } = svc();
+    const res = await s.roster(makeUser('RegionalVicePresident'));
+    expect(res.staff.length).toBeGreaterThan(0);
+    expect(res.staff[0].email).toBeNull();
+  });
+
+  it('PL is scoped to supervisees only and gets NO email', async () => {
+    const { s, prisma } = svc();
+    const res = await s.roster(makeUser('CountryProgramLead'));
+    // supervisee link lookup ran, and findMany was filtered by superviseeId set
+    expect(prisma.staffSupervisorAssignment.findMany).toHaveBeenCalled();
+    const where = prisma.staffProfile.findMany.mock.calls[0][0].where;
+    expect(where.id).toEqual({ in: ['staff2'] });
+    expect(res.staff[0].email).toBeNull();
   });
 });
 

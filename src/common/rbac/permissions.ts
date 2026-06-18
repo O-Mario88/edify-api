@@ -82,7 +82,7 @@ export const ROLE_PERMISSIONS: Record<EdifyRole, PermissionKey[]> = {
     // requests. Approval lives in the field chain: CCEO → PL. (Spec correction.)
     P.EVIDENCE_REVIEW, P.BUDGET_VIEW_SUMMARY, P.BUDGET_VIEW_DETAIL,
     P.COST_SETTINGS_MANAGE,
-    P.STAFF_MANAGE, P.PARTNER_VIEW, P.PARTNER_MANAGE, P.PROJECT_MANAGE, P.ANALYTICS_VIEW, P.EXPORT,
+    P.STAFF_MANAGE, P.STAFF_PERFORMANCE_VIEW, P.PARTNER_VIEW, P.PARTNER_MANAGE, P.PROJECT_MANAGE, P.ANALYTICS_VIEW, P.EXPORT,
     P.RECRUITMENT_INTELLIGENCE_VIEW,
     // Full country leadership decision authority.
     P.LEADERSHIP_ENGINE_VIEW, P.LEADERSHIP_DECISION_REVIEW,
@@ -96,6 +96,7 @@ export const ROLE_PERMISSIONS: Record<EdifyRole, PermissionKey[]> = {
     // Region/country summary + approval-level decision review.
     P.LEADERSHIP_ENGINE_VIEW, P.LEADERSHIP_DECISION_REVIEW,
     P.BUDGET_INTELLIGENCE_VIEW, // summary budget view
+    P.STAFF_PERFORMANCE_VIEW, // region staff-performance summary (no PII/email — scoped in HrService)
   ],
   CountryProgramLead: [
     P.SCHOOL_VIEW, P.SCHOOL_DIRECTORY_VIEW, P.SCHOOL_EDIT, P.CLUSTER_VIEW, P.CLUSTER_ASSIGN, P.SSA_VIEW,
@@ -107,6 +108,7 @@ export const ROLE_PERMISSIONS: Record<EdifyRole, PermissionKey[]> = {
     // Supervised-team decision support + review within their scope.
     P.LEADERSHIP_ENGINE_VIEW, P.LEADERSHIP_DECISION_REVIEW,
     P.BUDGET_INTELLIGENCE_VIEW, // supervised-team budget/fund view
+    P.STAFF_PERFORMANCE_VIEW, // supervised-team roster only (scoped to supervisees in HrService)
   ],
   CCEO: [
     // The CCEO is the primary cluster-assigning field role: they run the

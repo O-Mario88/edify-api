@@ -99,17 +99,29 @@ export class AnalyticsService {
     };
   }
 
-  async ssaPerformance(user: AuthUser, geo?: GeoFilter) {
+  // Headline SSA performance for the caller's scope. This is CURRENT-FY truth:
+  // it filters to the operational FY (or an explicit fy) and keeps the LATEST
+  // SSA per school, so the count can never exceed the number of schools and the
+  // averages don't blend prior-year baselines into the current headline. (The
+  // prior bug counted every SsaRecord across all FYs → schoolsWithSsa > schools.)
+  async ssaPerformance(user: AuthUser, geo?: GeoFilter & { fy?: string }) {
     const scope = await this.scope.resolveUserScope(user);
     const where = this.schoolScope(scope, geo);
     const schools = await this.prisma.school.findMany({ where, select: { id: true } });
     const schoolIds = schools.map((s) => s.id);
     if (schoolIds.length === 0) return { schoolsWithSsa: 0, overallAverage: 0, byIntervention: [] };
 
-    const records = await this.prisma.ssaRecord.findMany({
-      where: { schoolId: { in: schoolIds }, deletedAt: null },
+    const fy = geo?.fy ?? getOperationalFY();
+    const all = await this.prisma.ssaRecord.findMany({
+      where: { schoolId: { in: schoolIds }, deletedAt: null, fy },
+      orderBy: { dateOfSsa: 'desc' },
       include: { scores: true },
     });
+    // Latest SSA per school within the FY (records are pre-sorted desc by date).
+    const latestBySchool = new Map<string, (typeof all)[number]>();
+    for (const r of all) if (!latestBySchool.has(r.schoolId)) latestBySchool.set(r.schoolId, r);
+    const records = [...latestBySchool.values()];
+
     const scored = records.filter((r) => r.averageScore != null);
     const overall = scored.length ? Math.round((scored.reduce((s, r) => s + (r.averageScore ?? 0), 0) / scored.length) * 10) / 10 : 0;
     const acc = new Map<string, { sum: number; n: number }>();
@@ -118,6 +130,7 @@ export class AnalyticsService {
       cur.sum += sc.score; cur.n++; acc.set(sc.intervention, cur);
     }
     return {
+      fy,
       schoolsWithSsa: records.length,
       overallAverage: overall,
       byIntervention: [...acc.entries()].map(([intervention, v]) => ({ intervention, average: Math.round((v.sum / v.n) * 10) / 10 })).sort((a, b) => a.average - b.average),
@@ -265,7 +278,7 @@ export class AnalyticsService {
       centroidLat: number | null; centroidLng: number | null;
       schools: number; core: number; clustered: number; ssaDone: number; ssaSum: number; ssaN: number;
       coreSsaSum: number; coreSsaN: number; clientSsaSum: number; clientSsaN: number;
-      critical: number; schoolIds: string[]; clusterIds: Set<string>;
+      critical: number; coreCritical: number; clientCritical: number; schoolIds: string[]; clusterIds: Set<string>;
       intv: Map<string, { sum: number; n: number }>;
     };
     const map = new Map<string, Acc>();
@@ -275,7 +288,7 @@ export class AnalyticsService {
         region: s.district?.region?.name ?? '', subRegion: s.district?.subRegion?.name ?? null,
         centroidLat: s.district?.latitude ?? null, centroidLng: s.district?.longitude ?? null,
         schools: 0, core: 0, clustered: 0, ssaDone: 0, ssaSum: 0, ssaN: 0,
-        coreSsaSum: 0, coreSsaN: 0, clientSsaSum: 0, clientSsaN: 0, critical: 0, schoolIds: [],
+        coreSsaSum: 0, coreSsaN: 0, clientSsaSum: 0, clientSsaN: 0, critical: 0, coreCritical: 0, clientCritical: 0, schoolIds: [],
         clusterIds: new Set<string>(), intv: new Map<string, { sum: number; n: number }>(),
       };
       cur.schools++;
@@ -286,10 +299,12 @@ export class AnalyticsService {
       if (s.currentFySsaStatus === 'done') cur.ssaDone++;
       const rec = s.ssaRecords[0];
       if (rec?.averageScore != null) {
-        cur.ssaSum += rec.averageScore; cur.ssaN++; if (rec.averageScore < 5) cur.critical++;
-        // Split by school type so leadership sees core vs client SSA separately.
-        if (s.schoolType === 'core') { cur.coreSsaSum += rec.averageScore; cur.coreSsaN++; }
-        else { cur.clientSsaSum += rec.averageScore; cur.clientSsaN++; }
+        cur.ssaSum += rec.averageScore; cur.ssaN++;
+        const isCrit = rec.averageScore < 5;
+        if (isCrit) cur.critical++;
+        // Split SSA + critical by school type so leadership sees core vs client.
+        if (s.schoolType === 'core') { cur.coreSsaSum += rec.averageScore; cur.coreSsaN++; if (isCrit) cur.coreCritical++; }
+        else { cur.clientSsaSum += rec.averageScore; cur.clientSsaN++; if (isCrit) cur.clientCritical++; }
       }
       // Per-intervention accumulation → the district's weakest interventions.
       for (const sc of rec?.scores ?? []) {
@@ -342,7 +357,7 @@ export class AnalyticsService {
         avgSsa,
         coreAvgSsa: d.coreSsaN ? Math.round((d.coreSsaSum / d.coreSsaN) * 10) / 10 : null,
         clientAvgSsa: d.clientSsaN ? Math.round((d.clientSsaSum / d.clientSsaN) * 10) / 10 : null,
-        criticalCount: d.critical,
+        criticalCount: d.critical, coreCriticalCount: d.coreCritical, clientCriticalCount: d.clientCritical,
         activitiesCompleted: activitiesByDistrict.get(d.districtId) ?? 0,
         status, interventions, weakestInterventions,
       };
@@ -395,6 +410,8 @@ export class AnalyticsService {
         coreAvgSsa: natCoreN ? Math.round((natCoreSum / natCoreN) * 10) / 10 : null,
         clientAvgSsa: natClientN ? Math.round((natClientSum / natClientN) * 10) / 10 : null,
         criticalSchools: districts.reduce((a, d) => a + d.criticalCount, 0),
+        coreCriticalSchools: districts.reduce((a, d) => a + d.coreCriticalCount, 0),
+        clientCriticalSchools: districts.reduce((a, d) => a + d.clientCriticalCount, 0),
         highRiskDistricts: districts.filter((d) => d.status === 'high_risk').length,
         activitiesCompleted: districts.reduce((a, d) => a + d.activitiesCompleted, 0),
         interventions: nationalInterventions, weakestInterventions: nationalWeakest,
@@ -427,7 +444,7 @@ export class AnalyticsService {
         .sort((a, b) => a.avg - b.avg || a.key.localeCompare(b.key))[0] ?? null;
 
     type Cl = { id: string; name: string; schools: number; ssaSum: number; ssaN: number; intv: Map<string, { sum: number; n: number }> };
-    type Sc = { name: string; schools: number; core: number; ssaSum: number; ssaN: number; coreSsaSum: number; coreSsaN: number; clientSsaSum: number; clientSsaN: number; clusterIds: Set<string>; intv: Map<string, { sum: number; n: number }> };
+    type Sc = { name: string; schools: number; core: number; ssaSum: number; ssaN: number; coreSsaSum: number; coreSsaN: number; clientSsaSum: number; clientSsaN: number; coreCrit: number; clientCrit: number; clusterIds: Set<string>; intv: Map<string, { sum: number; n: number }> };
     const clMap = new Map<string, Cl>();
     const scMap = new Map<string, Sc>();
     for (const s of schools) {
@@ -441,14 +458,15 @@ export class AnalyticsService {
       }
       const scName = s.subCounty?.name;
       if (scName) {
-        const sc = scMap.get(scName) ?? { name: scName, schools: 0, core: 0, ssaSum: 0, ssaN: 0, coreSsaSum: 0, coreSsaN: 0, clientSsaSum: 0, clientSsaN: 0, clusterIds: new Set(), intv: new Map() };
+        const sc = scMap.get(scName) ?? { name: scName, schools: 0, core: 0, ssaSum: 0, ssaN: 0, coreSsaSum: 0, coreSsaN: 0, clientSsaSum: 0, clientSsaN: 0, coreCrit: 0, clientCrit: 0, clusterIds: new Set(), intv: new Map() };
         sc.schools++;
         if (s.schoolType === 'core') sc.core++;
         if (s.clusterId) sc.clusterIds.add(s.clusterId);
         if (rec?.averageScore != null) {
           sc.ssaSum += rec.averageScore; sc.ssaN++;
-          if (s.schoolType === 'core') { sc.coreSsaSum += rec.averageScore; sc.coreSsaN++; }
-          else { sc.clientSsaSum += rec.averageScore; sc.clientSsaN++; }
+          const crit = rec.averageScore < 5;
+          if (s.schoolType === 'core') { sc.coreSsaSum += rec.averageScore; sc.coreSsaN++; if (crit) sc.coreCrit++; }
+          else { sc.clientSsaSum += rec.averageScore; sc.clientSsaN++; if (crit) sc.clientCrit++; }
         }
         for (const x of rec?.scores ?? []) { const e = sc.intv.get(x.intervention) ?? { sum: 0, n: 0 }; e.sum += x.score; e.n++; sc.intv.set(x.intervention, e); }
         scMap.set(scName, sc);
@@ -462,6 +480,7 @@ export class AnalyticsService {
       clusters: s.clusterIds.size, avgSsa: s.ssaN ? Math.round((s.ssaSum / s.ssaN) * 10) / 10 : null,
       coreAvgSsa: s.coreSsaN ? Math.round((s.coreSsaSum / s.coreSsaN) * 10) / 10 : null,
       clientAvgSsa: s.clientSsaN ? Math.round((s.clientSsaSum / s.clientSsaN) * 10) / 10 : null,
+      coreCriticalCount: s.coreCrit, clientCriticalCount: s.clientCrit,
       weakest: weakestOf(s.intv),
     })).sort((a, b) => b.schools - a.schools);
     return { districtId, clusters, subCounties };
