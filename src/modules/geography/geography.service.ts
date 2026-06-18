@@ -20,4 +20,23 @@ export class GeographyService {
   listSubCounties(districtId: string) {
     return this.prisma.subCounty.findMany({ where: { districtId }, orderBy: { name: 'asc' } });
   }
+
+  // Parish layer (admin4) — from UG-AU-DS-2022. Empty for sub-counties the
+  // dataset didn't cover.
+  listParishes(subCountyId: string) {
+    return this.prisma.parish.findMany({
+      where: { subCountyId },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, source: true },
+    });
+  }
+
+  // Village layer (admin5) — the leaf, from UG-AU-DS-2022.
+  listVillages(parishId: string) {
+    return this.prisma.village.findMany({
+      where: { parishId },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true },
+    });
+  }
 }

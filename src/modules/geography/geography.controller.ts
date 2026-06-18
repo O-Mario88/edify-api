@@ -24,4 +24,14 @@ export class GeographyController {
   subCounties(@Query('districtId') districtId: string) {
     return this.geography.listSubCounties(districtId);
   }
+
+  @Get('parishes')
+  parishes(@Query('subCountyId') subCountyId: string) {
+    return this.geography.listParishes(subCountyId);
+  }
+
+  @Get('villages')
+  villages(@Query('parishId') parishId: string) {
+    return this.geography.listVillages(parishId);
+  }
 }

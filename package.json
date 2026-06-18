@@ -22,6 +22,7 @@
     "validate:ssa-fy": "ts-node --transpile-only scripts/validate-ssa-fy.ts",
     "geo:subregions": "ts-node --transpile-only scripts/geo-subregions.ts",
     "geo:import": "ts-node --transpile-only scripts/geo-import.ts",
+    "geo:import:units-2022": "ts-node --transpile-only scripts/geo-import-units-2022.ts",
     "geo:map-schools": "ts-node --transpile-only scripts/geo-map-schools.ts",
     "geo:verify": "ts-node --transpile-only scripts/geo-verify.ts",
     "audit:verify": "ts-node --transpile-only scripts/audit-verify.ts",

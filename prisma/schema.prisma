@@ -557,17 +557,33 @@ model SubCounty {
 model Parish {
   id          String    @id @default(cuid())
   name        String
-  // Parishes are NOT in COD-AB — this table stays empty until an official parish
-  // source is imported. pcode/source/confidence track provenance when it is.
+  // Parishes are NOT in COD-AB. Populated from the Uganda Administrative Units
+  // Dataset 2022 (UG-AU-DS-2022). pcode/source/confidence track provenance.
   pcode       String?   @unique
   source      String?
   confidence  String? // NOT_IN_BOUNDARY_SOURCE until verified
   subCounty   SubCounty @relation(fields: [subCountyId], references: [id])
   subCountyId String
   schools     School[]
+  villages    Village[]
   createdAt   DateTime  @default(now())
 
   @@unique([subCountyId, name])
+}
+
+// Village (admin5) — the leaf of Uganda's administrative hierarchy. NOT in
+// COD-AB; populated from the Uganda Administrative Units Dataset 2022. `source`
+// records provenance ("UG-AU-DS-2022").
+model Village {
+  id        String   @id @default(cuid())
+  name      String
+  parish    Parish   @relation(fields: [parishId], references: [id])
+  parishId  String
+  source    String?
+  createdAt DateTime @default(now())
+
+  @@unique([parishId, name])
+  @@index([parishId])
 }
 
 // Alias / known spelling variant for any admin level — drives tolerant matching
