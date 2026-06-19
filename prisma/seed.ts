@@ -642,8 +642,18 @@ async function purgeOperational() {
 
 async function main() {
   await seedReference();
-  if (IS_PROD) { console.log('• production: skipping demo data'); return; }
-  if (!MOCK) { console.log('• ENABLE_MOCK_DATA=false: skipping demo data'); return; }
+  // Demo data (users + schools + operational rows) is normally withheld in
+  // production. A demo / online-test deployment needs it so the edify-web bridge
+  // has accounts to authenticate as and the dashboards have content — opt in
+  // EXPLICITLY with ALLOW_DEMO_SEED_IN_PROD=true (deliberate, off by default).
+  const demoAllowed = MOCK || (IS_PROD && process.env.ALLOW_DEMO_SEED_IN_PROD === 'true');
+  if (!demoAllowed) {
+    console.log(IS_PROD
+      ? '• production: skipping demo data (set ALLOW_DEMO_SEED_IN_PROD=true to seed a demo/online-test deployment)'
+      : '• ENABLE_MOCK_DATA=false: skipping demo data');
+    return;
+  }
+  if (IS_PROD) console.log('• ALLOW_DEMO_SEED_IN_PROD=true → seeding demo data into a PRODUCTION database (demo/online-test deployment).');
   await purgeOperational();
   const subCounties = await seedGeography();
   const districtIds = [...new Set(subCounties.map((s) => s.districtId))];

@@ -1,0 +1,53 @@
+# Fly.io config for edify-api (NestJS + Prisma). Deploy: `fly deploy`.
+#
+# SET BEFORE FIRST DEPLOY:
+#   • app           — your Fly app name (must be globally unique). `fly apps create edify-api`
+#   • primary_region — MATCH edify-web's region (run `fly status -a <edify-web-app>` to find it)
+#
+# The bridge from edify-web is SERVER-SIDE only (no browser → edify-api calls),
+# so CORS is unneeded. This config exposes a public HTTPS service (JWT-gated);
+# for tighter security you can drop [http_service] and reach it over Fly private
+# networking at http://edify-api.internal:4000 instead (keep min_machines_running >= 1).
+
+app = "edify-api"
+primary_region = "jnb"   # ← change to match edify-web's region
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "4000"
+  NODE_ENV = "production"
+  AUTHZ_MODE = "enforce"                 # prod env-validation requires "enforce"
+  EVIDENCE_STORAGE_DIR = "/data/evidence" # absolute path on the mounted volume below
+
+# Migrations run automatically on each release (Fly spins a one-off VM first).
+# The Docker entrypoint ALSO runs `prisma migrate deploy` on boot (idempotent),
+# so this is belt-and-suspenders.
+[deploy]
+  release_command = "npx prisma migrate deploy"
+
+[http_service]
+  internal_port = 4000
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 1               # keep 1 warm so edify-web's bridge never cold-fails
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/api/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "40s"
+
+# Persistent volume for evidence files (prod env-validation requires an absolute,
+# non-ephemeral EVIDENCE_STORAGE_DIR). Create with:
+#   fly volumes create edify_api_data --region <same-as-primary> --size 1
+[[mounts]]
+  source = "edify_api_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
