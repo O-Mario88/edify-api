@@ -44,7 +44,13 @@ async function bootstrap() {
   }
 
   const port = config.get<number>('PORT') ?? 4000;
-  await app.listen(port);
+  // Bind '::' (dual-stack IPv6) so the edify-web bridge can reach us over the
+  // platform's PRIVATE network — Railway's internal DNS (edify-api.railway.internal)
+  // and Fly's (.internal) both resolve to IPv6. '::' also accepts IPv4 (incl. local
+  // 127.0.0.1) via dual-stack, so dev/public traffic is unaffected. A bare
+  // listen(port) usually picks '::' anyway, but '0.0.0.0' would be IPv4-only and
+  // silently unreachable on the internal network — pin it.
+  await app.listen(port, '::');
   logger.log(`Edify API on http://localhost:${port}/api (docs: /api/docs)`);
   logger.log(
     `flags: mock=${config.get('ENABLE_MOCK_DATA')} devEndpoints=${config.get('ENABLE_DEV_ENDPOINTS')} salesforce=${config.get('ENABLE_SALESFORCE_INTEGRATION')}`,
